@@ -1,0 +1,967 @@
+# Layered Architecture Implementation
+
+**Version:** 1.0  
+**Last Updated:** January 2025  
+**Project:** WebTrixPro CMS
+
+---
+
+## Table of Contents
+
+1. [Architecture Overview](#architecture-overview)
+2. [Layer Definitions](#layer-definitions)
+3. [Service Layer Pattern](#service-layer-pattern)
+4. [Hook Patterns](#hook-patterns)
+5. [Component Organization](#component-organization)
+6. [File Structure Conventions](#file-structure-conventions)
+7. [Feature-Based Organization](#feature-based-organization)
+8. [Implementation Examples](#implementation-examples)
+
+---
+
+## Architecture Overview
+
+### Layered Architecture Pattern
+
+**Rule:** All features must follow the layered pattern:
+
+**Screen → Component → Hook → Service → Endpoint → Data**
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Screen Layer                         │
+│              /app/[feature]/page.tsx                    │
+│         (Next.js App Router - Server Component)         │
+└────────────────────┬──────────────────────────────────┘
+                     │
+┌────────────────────▼──────────────────────────────────┐
+│                 Component Layer                       │
+│          /components/[feature]/[Component].tsx        │
+│              (React UI Components)                     │
+└────────────────────┬──────────────────────────────────┘
+                     │
+┌────────────────────▼──────────────────────────────────┐
+│                   Hook Layer                           │
+│            /hooks/use-[feature].ts                     │
+│      (Business Logic, TanStack Query Integration)      │
+└────────────────────┬──────────────────────────────────┘
+                     │
+┌────────────────────▼──────────────────────────────────┐
+│                 Service Layer                         │
+│    /lib/services/[feature]/[Feature]Service.ts       │
+│         (API Orchestration, BaseService)              │
+└────────────────────┬──────────────────────────────────┘
+                     │
+┌────────────────────▼──────────────────────────────────┐
+│                Endpoint Layer                         │
+│        /app/api/v1/[feature]/route.ts                │
+│          (Next.js API Routes, Validation)             │
+└────────────────────┬──────────────────────────────────┘
+                     │
+┌────────────────────▼──────────────────────────────────┐
+│                  Data Layer                            │
+│            /lib/db/connection.ts                      │
+│         (PostgreSQL, Raw SQL Queries)                 │
+└────────────────────────────────────────────────────────┘
+```
+
+### Data Flow
+
+1. **Screen** renders and fetches initial data (Server Component)
+2. **Component** displays UI and handles user interactions
+3. **Hook** manages state, data fetching, and business logic
+4. **Service** orchestrates API calls and data transformation
+5. **Endpoint** handles HTTP requests, validation, and database operations
+6. **Data** layer executes SQL queries and returns results
+
+---
+
+## Layer Definitions
+
+### 1. Screen Layer (`/app/[feature]/page.tsx`)
+
+**Purpose:** Next.js App Router pages (Server Components) that fetch initial data and render the main UI.
+
+**Responsibilities:**
+- Fetch initial data (Server Components)
+- Render page layout
+- Pass data to components
+- Handle route-level loading/error states
+
+**✅ CORRECT:**
+```typescript
+// app/clients/page.tsx
+import { clientService } from '@/lib/services';
+import { ClientsList } from '@/components/clients/ClientsList';
+import { ClientsPageHeader } from '@/components/clients/ClientsPageHeader';
+
+export default async function ClientsPage() {
+  const clients = await clientService.list();
+  
+  return (
+    <div className="clients-page">
+      <ClientsPageHeader />
+      <ClientsList clients={clients} />
+    </div>
+  );
+}
+```
+
+**Patterns:**
+- Server Components by default
+- Direct service calls for initial data
+- Pass data as props to client components
+- Use `loading.tsx` for loading states
+- Use `error.tsx` for error boundaries
+
+### 2. Component Layer (`/components/[feature]/`)
+
+**Purpose:** React UI components that display data and handle user interactions.
+
+**Responsibilities:**
+- Render UI based on props
+- Handle user interactions (clicks, form submissions)
+- Display loading/error/empty states
+- Call hooks for data operations
+
+**✅ CORRECT:**
+```typescript
+// components/clients/ClientsList.tsx
+'use client';
+
+import { useClients } from '@/hooks/use-clients';
+import { ClientCard } from './ClientCard';
+import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
+import { EmptyState } from '@/components/shared/EmptyState';
+
+interface ClientsListProps {
+  initialClients?: Client[];
+}
+
+export function ClientsList({ initialClients }: ClientsListProps) {
+  const { query } = useClients();
+  const clients = query.data || initialClients || [];
+
+  if (query.isLoading) return <LoadingSpinner />;
+  if (query.isError) return <div>Error loading clients</div>;
+  if (!clients.length) return <EmptyState message="No clients found" />;
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      {clients.map(client => (
+        <ClientCard key={client.id} client={client} />
+      ))}
+    </div>
+  );
+}
+```
+
+**Patterns:**
+- Client Components when interactivity is needed
+- TypeScript interfaces for all props
+- Loading/error/empty states
+- Composition over inheritance
+- Reusable shared components
+
+### 3. Hook Layer (`/hooks/use-[feature].ts`)
+
+**Purpose:** Custom React hooks that manage business logic, state, and data fetching.
+
+**Responsibilities:**
+- Integrate with TanStack Query
+- Use service layer (not direct API calls)
+- Handle errors with useGlobalErrorHandler
+- Provide mutations and queries
+- Manage local state when needed
+
+**✅ CORRECT:**
+```typescript
+// hooks/use-clients.ts
+import { useGlobalErrorHandler } from '@/hooks/use-global-error-handler';
+import { clientService } from '@/lib/services';
+import { queryKeys } from '@/lib/query-keys';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import type { CreateClientInput, UpdateClientInput } from '@/types/client/client.types';
+
+export function useClients() {
+  const { handleFetchError, handleCrudError, handleCrudSuccess } = useGlobalErrorHandler();
+  const queryClient = useQueryClient();
+
+  const query = useQuery({
+    queryKey: queryKeys.clients.list(),
+    queryFn: async () => {
+      try {
+        return await clientService.list();
+      } catch (error) {
+        handleFetchError(error, 'client');
+        throw error;
+      }
+    }
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (data: CreateClientInput) => {
+      try {
+        const result = await clientService.create(data);
+        handleCrudSuccess('create', 'client', result.name);
+        return result;
+      } catch (error) {
+        handleCrudError(error, 'create', 'client', data.name);
+        throw error;
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.clients.list() });
+    }
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: UpdateClientInput }) => {
+      try {
+        const result = await clientService.update(id, data);
+        handleCrudSuccess('update', 'client', result.name);
+        return result;
+      } catch (error) {
+        handleCrudError(error, 'update', 'client', data.name);
+        throw error;
+      }
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.clients.detail(variables.id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.clients.list() });
+    }
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      try {
+        await clientService.delete(id);
+        handleCrudSuccess('delete', 'client', id);
+      } catch (error) {
+        handleCrudError(error, 'delete', 'client', id);
+        throw error;
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.clients.list() });
+    }
+  });
+
+  return {
+    query,
+    createMutation,
+    updateMutation,
+    deleteMutation,
+  };
+}
+```
+
+**Patterns:**
+- Always use service layer (never direct customFetch)
+- Always use useGlobalErrorHandler
+- Follow query key hierarchy
+- Invalidate queries after mutations
+- Return queries and mutations for component use
+
+### 4. Service Layer (`/lib/services/[feature]/[Feature]Service.ts`)
+
+**Purpose:** Service classes that orchestrate API calls and provide a clean interface for hooks.
+
+**Responsibilities:**
+- Extend BaseService
+- Use centralized logger
+- Provide CRUD operations
+- Add custom business logic methods
+- Use customFetch internally (not exposed)
+
+**✅ CORRECT:**
+```typescript
+// lib/services/clients/ClientService.ts
+import { logger } from '@/lib/logger';
+import { BaseService } from '../base/BaseService';
+import type { Client, CreateClientInput, UpdateClientInput } from '@/types/client/client.types';
+
+export class ClientService extends BaseService<Client, CreateClientInput, UpdateClientInput> {
+  protected getBasePath(): string {
+    return '/api/v1/clients';
+  }
+
+  async getByEmail(email: string): Promise<Client | null> {
+    logger.debug('[ClientService] Getting client by email:', email);
+    try {
+      const result = await this.customFetch<Client[]>(`${this.getBasePath()}?email=${email}`);
+      return result[0] || null;
+    } catch (error) {
+      logger.error('[ClientService] Error getting client by email:', error);
+      throw error;
+    }
+  }
+
+  async search(query: string): Promise<Client[]> {
+    logger.debug('[ClientService] Searching clients:', query);
+    try {
+      return await this.customFetch<Client[]>(`${this.getBasePath()}?search=${encodeURIComponent(query)}`);
+    } catch (error) {
+      logger.error('[ClientService] Error searching clients:', error);
+      throw error;
+    }
+  }
+}
+
+export const clientService = new ClientService();
+```
+
+**Patterns:**
+- Extend BaseService with generics
+- Implement getBasePath() method
+- Use logger (not console.*)
+- Add custom methods as needed
+- Export singleton instance
+
+### 5. Endpoint Layer (`/app/api/v1/[feature]/route.ts`)
+
+**Purpose:** Next.js API route handlers that process HTTP requests and interact with the database.
+
+**Responsibilities:**
+- Handle HTTP methods (GET, POST, PATCH, DELETE)
+- Validate input with Zod schemas
+- Authenticate and authorize requests
+- Execute database queries
+- Return appropriate responses
+
+**✅ CORRECT:**
+```typescript
+// app/api/v1/clients/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { getSession } from '@auth0/nextjs-auth0';
+import { db } from '@/lib/db/connection';
+import { createClientSchema } from '@/types/client/client.schemas';
+import { logger } from '@/lib/logger';
+import { hasPermission } from '@/lib/auth/permissions';
+
+export async function GET(request: NextRequest) {
+  try {
+    const session = await getSession(request);
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    if (!hasPermission(session.user, 'clients:read')) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    const result = await db.query(
+      'SELECT * FROM clients WHERE deleted_at IS NULL ORDER BY created_at DESC'
+    );
+
+    return NextResponse.json(result.rows);
+  } catch (error) {
+    logger.error('[API] GET /api/v1/clients error:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch clients' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const session = await getSession(request);
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    if (!hasPermission(session.user, 'clients:create')) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    const body = await request.json();
+    const validatedData = createClientSchema.parse(body);
+
+    const result = await db.query(
+      'INSERT INTO clients (name, email, created_by) VALUES ($1, $2, $3) RETURNING *',
+      [validatedData.name, validatedData.email, session.user.sub]
+    );
+
+    logger.info('[API] Client created:', result.rows[0].id);
+
+    return NextResponse.json(result.rows[0], { status: 201 });
+  } catch (error) {
+    logger.error('[API] POST /api/v1/clients error:', error);
+    
+    if (error instanceof z.ZodError) {
+      return NextResponse.json(
+        { error: 'Validation error', details: error.errors },
+        { status: 400 }
+      );
+    }
+
+    return NextResponse.json(
+      { error: 'Failed to create client' },
+      { status: 500 }
+    );
+  }
+}
+```
+
+**Patterns:**
+- Follow `/api/v1/[feature]/route.ts` pattern
+- Validate all inputs with Zod
+- Check authentication and authorization
+- Use parameterized SQL queries
+- Return appropriate HTTP status codes
+- Log errors with centralized logger
+
+### 6. Data Layer (`/lib/db/connection.ts`)
+
+**Purpose:** Database connection and query execution using PostgreSQL with raw SQL.
+
+**Responsibilities:**
+- Manage connection pooling
+- Execute parameterized SQL queries
+- Handle transactions
+- Return query results
+
+**✅ CORRECT:**
+```typescript
+// lib/db/connection.ts
+import { Pool } from 'pg';
+
+const pool = new Pool({
+  host: process.env.DATABASE_HOST,
+  port: parseInt(process.env.DATABASE_PORT || '5432'),
+  database: process.env.DATABASE_NAME,
+  user: process.env.DATABASE_USER,
+  password: process.env.DATABASE_PASSWORD,
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
+});
+
+export const db = {
+  query: (text: string, params?: unknown[]) => pool.query(text, params),
+  connect: () => pool.connect(),
+};
+```
+
+**Patterns:**
+- Use connection pooling
+- Always use parameterized queries
+- Handle transactions properly
+- Release connections in finally blocks
+
+---
+
+## Service Layer Pattern
+
+### BaseService Implementation
+
+**Rule:** All services must extend BaseService which provides standard CRUD operations.
+
+**BaseService Structure:**
+```typescript
+// lib/services/base/BaseService.ts
+import { customFetch } from '@/lib/custom-fetch';
+import { logger } from '@/lib/logger';
+
+export abstract class BaseService<T, CreateInput, UpdateInput> {
+  protected abstract getBasePath(): string;
+
+  async list(): Promise<T[]> {
+    logger.debug(`[${this.constructor.name}] Listing items`);
+    return await this.customFetch<T[]>(this.getBasePath());
+  }
+
+  async get(id: string): Promise<T> {
+    logger.debug(`[${this.constructor.name}] Getting item:`, id);
+    return await this.customFetch<T>(`${this.getBasePath()}/${id}`);
+  }
+
+  async create(data: CreateInput): Promise<T> {
+    logger.debug(`[${this.constructor.name}] Creating item:`, data);
+    return await this.customFetch<T>(this.getBasePath(), {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async update(id: string, data: UpdateInput): Promise<T> {
+    logger.debug(`[${this.constructor.name}] Updating item:`, id, data);
+    return await this.customFetch<T>(`${this.getBasePath()}/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async delete(id: string): Promise<void> {
+    logger.debug(`[${this.constructor.name}] Deleting item:`, id);
+    return await this.customFetch<void>(`${this.getBasePath()}/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  protected async customFetch<T>(url: string, options?: RequestInit): Promise<T> {
+    // Implementation with error handling, auth headers, etc.
+  }
+}
+```
+
+### Service Registration
+
+**Rule:** All services must be exported from `lib/services/index.ts`.
+
+```typescript
+// lib/services/index.ts
+export { clientService } from './clients/ClientService';
+export { projectService } from './projects/ProjectService';
+export { userService } from './users/UserService';
+// ... other services
+```
+
+---
+
+## Hook Patterns
+
+### Standard Hook Structure
+
+**Rule:** All data fetching hooks follow a consistent pattern.
+
+**Pattern:**
+1. Import dependencies (useGlobalErrorHandler, service, queryKeys)
+2. Initialize error handler
+3. Create queries with error handling
+4. Create mutations with error handling and cache invalidation
+5. Return queries and mutations
+
+### Query Key Hierarchy
+
+**Rule:** All query keys must follow a hierarchical structure.
+
+```typescript
+// lib/query-keys.ts
+export const queryKeys = {
+  clients: {
+    all: ['clients'] as const,
+    lists: () => [...queryKeys.clients.all, 'list'] as const,
+    list: (filters?: string) => [...queryKeys.clients.lists(), { filters }] as const,
+    details: () => [...queryKeys.clients.all, 'detail'] as const,
+    detail: (id: string) => [...queryKeys.clients.details(), id] as const,
+  },
+  projects: {
+    all: ['projects'] as const,
+    lists: () => [...queryKeys.projects.all, 'list'] as const,
+    list: (filters?: string) => [...queryKeys.projects.lists(), { filters }] as const,
+    details: () => [...queryKeys.projects.all, 'detail'] as const,
+    detail: (id: string) => [...queryKeys.projects.details(), id] as const,
+  },
+};
+```
+
+---
+
+## Component Organization
+
+### Feature-Based Component Structure
+
+**Rule:** Organize components by feature, with shared components in a separate directory.
+
+```
+/components/
+  /clients/
+    ClientsList.tsx
+    ClientCard.tsx
+    ClientForm.tsx
+    AddClientDialog.tsx
+    EditClientDialog.tsx
+  /projects/
+    ProjectsList.tsx
+    ProjectCard.tsx
+    ProjectForm.tsx
+  /shared/
+    LoadingSpinner.tsx
+    EmptyState.tsx
+    DataTable.tsx
+    Button.tsx
+    Input.tsx
+```
+
+### Component Naming
+
+**Rule:** Use PascalCase for component files and exports.
+
+- Component files: `ClientCard.tsx`
+- Component exports: `export function ClientCard() {}`
+- Shared components: `LoadingSpinner.tsx`, `EmptyState.tsx`
+
+---
+
+## File Structure Conventions
+
+### Complete Project Structure
+
+```
+/app/                      # Next.js App Router
+  /[feature]/
+    page.tsx              # Screen layer
+    layout.tsx
+    loading.tsx
+    error.tsx
+  /api/
+    /v1/
+      /[feature]/
+        route.ts          # Endpoint layer
+        /[id]/
+          route.ts
+
+/components/              # Component layer
+  /[feature]/
+    [Component].tsx
+  /shared/
+    [SharedComponent].tsx
+
+/hooks/                   # Hook layer
+  use-[feature].ts
+
+/lib/
+  /services/              # Service layer
+    /base/
+      BaseService.ts
+    /[feature]/
+      [Feature]Service.ts
+    index.ts
+  /db/
+    connection.ts         # Data layer
+  /query-keys.ts
+  /logger.ts
+  /custom-fetch.ts
+  /auth/
+    permissions.ts
+
+/types/                   # Type definitions
+  /[feature]/
+    [feature].types.ts
+    [feature].schemas.ts
+
+/middlewares/
+  rate-limit.ts
+  validation.ts
+
+/docs/                    # Documentation
+  CODE_REVIEW_REQUIREMENTS.md
+  tech-stack.md
+
+/tests/                   # Tests
+  /unit/
+  /integration/
+  /e2e/
+```
+
+---
+
+## Feature-Based Organization
+
+### Feature Module Structure
+
+**Rule:** Each feature should be self-contained with its own types, components, hooks, services, and API routes.
+
+**Example: Clients Feature**
+
+```
+/app/
+  /clients/
+    page.tsx
+
+/components/
+  /clients/
+    ClientsList.tsx
+    ClientCard.tsx
+    ClientForm.tsx
+    AddClientDialog.tsx
+
+/hooks/
+  use-clients.ts
+
+/lib/
+  /services/
+    /clients/
+      ClientService.ts
+
+/app/api/v1/
+  /clients/
+    route.ts
+    /[id]/
+      route.ts
+
+/types/
+  /client/
+    client.types.ts
+    client.schemas.ts
+```
+
+### Cross-Feature Dependencies
+
+**Rule:** When features depend on each other, import from the service layer, not directly from components or hooks.
+
+**✅ CORRECT:**
+```typescript
+// In ProjectService
+import { clientService } from '@/lib/services';
+
+async getProjectWithClient(projectId: string) {
+  const project = await this.get(projectId);
+  const client = await clientService.get(project.clientId);
+  return { ...project, client };
+}
+```
+
+**❌ INCORRECT:**
+```typescript
+// P1 HIGH - Direct component/hook import
+import { useClients } from '@/hooks/use-clients';
+```
+
+---
+
+## Implementation Examples
+
+### Complete Feature Implementation
+
+**1. Types:**
+```typescript
+// types/client/client.types.ts
+export interface Client {
+  id: string;
+  name: string;
+  email: string;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface CreateClientInput {
+  name: string;
+  email: string;
+}
+
+export interface UpdateClientInput {
+  name?: string;
+  email?: string;
+}
+```
+
+**2. Schemas:**
+```typescript
+// types/client/client.schemas.ts
+import { z } from 'zod';
+
+export const createClientSchema = z.object({
+  name: z.string().min(1, 'Name is required'),
+  email: z.string().email('Invalid email address'),
+});
+
+export const updateClientSchema = createClientSchema.partial();
+```
+
+**3. Service:**
+```typescript
+// lib/services/clients/ClientService.ts
+import { BaseService } from '../base/BaseService';
+import type { Client, CreateClientInput, UpdateClientInput } from '@/types/client/client.types';
+
+export class ClientService extends BaseService<Client, CreateClientInput, UpdateClientInput> {
+  protected getBasePath(): string {
+    return '/api/v1/clients';
+  }
+}
+
+export const clientService = new ClientService();
+```
+
+**4. Hook:**
+```typescript
+// hooks/use-clients.ts
+import { useGlobalErrorHandler } from '@/hooks/use-global-error-handler';
+import { clientService } from '@/lib/services';
+import { queryKeys } from '@/lib/query-keys';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+
+export function useClients() {
+  const { handleFetchError, handleCrudError, handleCrudSuccess } = useGlobalErrorHandler();
+  const queryClient = useQueryClient();
+
+  const query = useQuery({
+    queryKey: queryKeys.clients.list(),
+    queryFn: async () => {
+      try {
+        return await clientService.list();
+      } catch (error) {
+        handleFetchError(error, 'client');
+        throw error;
+      }
+    }
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (data: CreateClientInput) => {
+      try {
+        const result = await clientService.create(data);
+        handleCrudSuccess('create', 'client', result.name);
+        return result;
+      } catch (error) {
+        handleCrudError(error, 'create', 'client', data.name);
+        throw error;
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.clients.list() });
+    }
+  });
+
+  return { query, createMutation };
+}
+```
+
+**5. Component:**
+```typescript
+// components/clients/ClientsList.tsx
+'use client';
+
+import { useClients } from '@/hooks/use-clients';
+import { ClientCard } from './ClientCard';
+import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
+import { EmptyState } from '@/components/shared/EmptyState';
+
+export function ClientsList() {
+  const { query } = useClients();
+
+  if (query.isLoading) return <LoadingSpinner />;
+  if (query.isError) return <div>Error loading clients</div>;
+  if (!query.data?.length) return <EmptyState message="No clients found" />;
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      {query.data.map(client => (
+        <ClientCard key={client.id} client={client} />
+      ))}
+    </div>
+  );
+}
+```
+
+**6. Screen:**
+```typescript
+// app/clients/page.tsx
+import { ClientsList } from '@/components/clients/ClientsList';
+import { ClientsPageHeader } from '@/components/clients/ClientsPageHeader';
+
+export default function ClientsPage() {
+  return (
+    <div className="clients-page">
+      <ClientsPageHeader />
+      <ClientsList />
+    </div>
+  );
+}
+```
+
+**7. API Route:**
+```typescript
+// app/api/v1/clients/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { getSession } from '@auth0/nextjs-auth0';
+import { db } from '@/lib/db/connection';
+import { createClientSchema } from '@/types/client/client.schemas';
+import { logger } from '@/lib/logger';
+
+export async function GET(request: NextRequest) {
+  try {
+    const session = await getSession(request);
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const result = await db.query(
+      'SELECT * FROM clients WHERE deleted_at IS NULL ORDER BY created_at DESC'
+    );
+
+    return NextResponse.json(result.rows);
+  } catch (error) {
+    logger.error('[API] GET /api/v1/clients error:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch clients' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const session = await getSession(request);
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const body = await request.json();
+    const validatedData = createClientSchema.parse(body);
+
+    const result = await db.query(
+      'INSERT INTO clients (name, email, created_by) VALUES ($1, $2, $3) RETURNING *',
+      [validatedData.name, validatedData.email, session.user.sub]
+    );
+
+    return NextResponse.json(result.rows[0], { status: 201 });
+  } catch (error) {
+    logger.error('[API] POST /api/v1/clients error:', error);
+    return NextResponse.json(
+      { error: 'Failed to create client' },
+      { status: 500 }
+    );
+  }
+}
+```
+
+---
+
+## Quick Reference
+
+### Architecture Checklist
+
+**Screen Layer:**
+- [ ] Server Component by default
+- [ ] Fetches initial data with service
+- [ ] Passes data to components
+- [ ] Uses loading.tsx and error.tsx
+
+**Component Layer:**
+- [ ] TypeScript interface for props
+- [ ] Client Component when needed
+- [ ] Loading/error/empty states
+- [ ] Uses hooks for data operations
+
+**Hook Layer:**
+- [ ] Uses service layer (not direct API calls)
+- [ ] Uses useGlobalErrorHandler
+- [ ] Follows query key hierarchy
+- [ ] Invalidates cache after mutations
+
+**Service Layer:**
+- [ ] Extends BaseService
+- [ ] Uses centralized logger
+- [ ] Exported from services/index.ts
+- [ ] Provides clean API interface
+
+**Endpoint Layer:**
+- [ ] Follows `/api/v1/[feature]/route.ts` pattern
+- [ ] Validates input with Zod
+- [ ] Checks authentication/authorization
+- [ ] Uses parameterized SQL queries
+
+**Data Layer:**
+- [ ] Connection pooling
+- [ ] Parameterized queries
+- [ ] Proper transaction handling
+
+---
+
+**Last Updated:** January 2025  
+**Maintained By:** Development Team  
+**Reference:** `docs/CODE_REVIEW_REQUIREMENTS.md`, `.cursor/rules/project-wide-rules.mdc`

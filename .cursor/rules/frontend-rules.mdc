@@ -1,0 +1,1188 @@
+# Frontend Rules
+
+**Version:** 1.0  
+**Last Updated:** January 2025  
+**Project:** WebTrixPro CMS
+
+---
+
+## Table of Contents
+
+1. [React Component Patterns](#react-component-patterns)
+2. [Next.js App Router Conventions](#nextjs-app-router-conventions)
+3. [TanStack Query Usage](#tanstack-query-usage)
+4. [React Hook Form + Zod Validation](#react-hook-form--zod-validation)
+5. [shadcn/ui Component Usage](#shadcnui-component-usage)
+6. [Tailwind CSS Patterns](#tailwind-css-patterns)
+7. [Accessibility Requirements](#accessibility-requirements)
+8. [Performance Optimization](#performance-optimization)
+   - [Explicit Loading/Error/Empty State Checks](#explicit-loadingerrorempty-state-checks)
+   - [Error Boundaries](#error-boundaries)
+   - [Memoization](#memoization)
+   - [Code Splitting](#code-splitting)
+   - [Network Optimization](#network-optimization)
+   - [Memory Management](#memory-management)
+   - [State Management Decision Tree](#state-management-decision-tree)
+9. [Image Optimization](#image-optimization)
+10. [Hooks Review Checklist](#hooks-review-checklist)
+
+---
+
+## React Component Patterns
+
+### Component Structure
+
+**Rule:** All components must follow a consistent structure with explicit TypeScript interfaces for props.
+
+**✅ CORRECT:**
+```typescript
+interface MyComponentProps {
+  title: string;
+  data: DataType[];
+  onAction: (id: string) => void;
+  isLoading?: boolean;
+}
+
+export function MyComponent({ title, data, onAction, isLoading }: MyComponentProps) {
+  const processedData = useMemo(() => processData(data), [data]);
+  const handleClick = useCallback((id: string) => onAction(id), [onAction]);
+  
+  if (isLoading) return <LoadingSpinner />;
+  if (!data.length) return <EmptyState />;
+  
+  return (
+    <div>
+      <h2>{title}</h2>
+      {processedData.map(item => (
+        <button key={item.id} onClick={() => handleClick(item.id)}>
+          {item.name}
+        </button>
+      ))}
+    </div>
+  );
+}
+```
+
+### Component Organization
+
+**Structure:**
+1. Imports (external, internal, types)
+2. TypeScript interfaces
+3. Component function
+4. Hooks (useState, useEffect, useMemo, useCallback)
+5. Early returns (loading, error, empty states)
+6. Main render
+
+**✅ CORRECT:**
+```typescript
+// 1. Imports
+import { useState, useMemo, useCallback } from 'react';
+import { logger } from '@/lib/logger';
+import type { DataType } from '@/types/data.types';
+
+// 2. Interfaces
+interface ComponentProps {
+  data: DataType[];
+}
+
+// 3. Component
+export function Component({ data }: ComponentProps) {
+  // 4. Hooks
+  const [selected, setSelected] = useState<string | null>(null);
+  const processed = useMemo(() => processData(data), [data]);
+  
+  // 5. Early returns
+  if (!data.length) return <EmptyState />;
+  
+  // 6. Main render
+  return <div>{/* JSX */}</div>;
+}
+```
+
+### Client vs Server Components
+
+**Rule:** Use Server Components by default. Use `'use client'` directive only when needed.
+
+**Server Component (Default):**
+```typescript
+// app/clients/page.tsx
+export default async function ClientsPage() {
+  const clients = await clientService.list();
+  return <ClientsList clients={clients} />;
+}
+```
+
+**Client Component (When Needed):**
+```typescript
+'use client';
+
+import { useState } from 'react';
+
+export function InteractiveComponent() {
+  const [count, setCount] = useState(0);
+  return <button onClick={() => setCount(count + 1)}>{count}</button>;
+}
+```
+
+### Component Props Interface
+
+**Rule:** ALL component props MUST have explicit TypeScript interfaces (P0 CRITICAL).
+
+**✅ CORRECT:**
+```typescript
+interface ButtonProps {
+  label: string;
+  onClick: () => void;
+  variant?: 'primary' | 'secondary';
+  disabled?: boolean;
+}
+
+export function Button({ label, onClick, variant = 'primary', disabled }: ButtonProps) {
+  return <button onClick={onClick} disabled={disabled}>{label}</button>;
+}
+```
+
+**❌ INCORRECT:**
+```typescript
+// P0 CRITICAL - Missing interface
+export function Button({ label, onClick, variant, disabled }: any) {
+  return <button onClick={onClick} disabled={disabled}>{label}</button>;
+}
+```
+
+---
+
+## Next.js App Router Conventions
+
+### File Structure
+
+**Rule:** Follow Next.js App Router conventions for file organization.
+
+**Structure:**
+```
+/app/
+  /[feature]/
+    page.tsx           # Page component (Server Component)
+    layout.tsx         # Layout component
+    loading.tsx        # Loading UI
+    error.tsx          # Error UI
+    not-found.tsx     # Not found UI
+  /api/
+    /v1/
+      /[feature]/
+        route.ts       # API route handler
+```
+
+### Page Components
+
+**Rule:** Page components should be Server Components by default, fetching data directly.
+
+**✅ CORRECT:**
+```typescript
+// app/clients/page.tsx
+import { clientService } from '@/lib/services';
+import { ClientsList } from '@/components/clients/ClientsList';
+
+export default async function ClientsPage() {
+  const clients = await clientService.list();
+  
+  return (
+    <div>
+      <h1>Clients</h1>
+      <ClientsList clients={clients} />
+    </div>
+  );
+}
+```
+
+### Layout Components
+
+**Rule:** Use layout components for shared UI across routes.
+
+**✅ CORRECT:**
+```typescript
+// app/clients/layout.tsx
+export default function ClientsLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="clients-layout">
+      <ClientsSidebar />
+      <main>{children}</main>
+    </div>
+  );
+}
+```
+
+### Loading States
+
+**Rule:** Use `loading.tsx` for route-level loading states. Loading states must use informative skeleton screens that match the final content layout.
+
+**✅ CORRECT:**
+```typescript
+// app/clients/loading.tsx
+export default function Loading() {
+  return (
+    <div className="space-y-4">
+      <div className="h-8 bg-gray-200 rounded animate-pulse w-1/4" />
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {Array.from({ length: 6 }).map((_, index) => (
+          <div key={index} className="p-4 border rounded">
+            <div className="h-4 bg-gray-200 rounded animate-pulse w-3/4 mb-2" />
+            <div className="h-4 bg-gray-200 rounded animate-pulse w-1/2" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+```
+
+**❌ INCORRECT:**
+```typescript
+// ❌ BAD: Generic spinner
+export default function Loading() {
+  return <div>Loading...</div>; // Doesn't show layout structure
+}
+
+// ❌ BAD: Skeleton doesn't match layout
+export default function Loading() {
+  return <div className="h-64 bg-gray-200 animate-pulse" />; // Doesn't match final grid layout
+}
+```
+
+**Action:** Create skeleton screens that mirror the final component layout. Use multiple skeleton elements to represent different content areas.
+
+### Error Handling
+
+**Rule:** Use `error.tsx` for route-level error boundaries.
+
+**✅ CORRECT:**
+```typescript
+// app/clients/error.tsx
+'use client';
+
+export default function Error({
+  error,
+  reset,
+}: {
+  error: Error & { digest?: string };
+  reset: () => void;
+}) {
+  return (
+    <div>
+      <h2>Something went wrong!</h2>
+      <button onClick={() => reset()}>Try again</button>
+    </div>
+  );
+}
+```
+
+---
+
+## TanStack Query Usage
+
+### Query Key Hierarchy
+
+**Rule:** All query keys must follow the hierarchy pattern from `lib/query-keys.ts`.
+
+**✅ CORRECT:**
+```typescript
+// lib/query-keys.ts
+export const queryKeys = {
+  clients: {
+    all: ['clients'] as const,
+    lists: () => [...queryKeys.clients.all, 'list'] as const,
+    list: (filters?: string) => [...queryKeys.clients.lists(), { filters }] as const,
+    details: () => [...queryKeys.clients.all, 'detail'] as const,
+    detail: (id: string) => [...queryKeys.clients.details(), id] as const,
+  },
+};
+```
+
+**Usage:**
+```typescript
+import { queryKeys } from '@/lib/query-keys';
+
+const query = useQuery({
+  queryKey: queryKeys.clients.detail(id),
+  queryFn: () => clientService.get(id),
+});
+```
+
+### Hook Patterns
+
+**Rule:** All data fetching hooks must use service layer and error handling.
+
+**✅ CORRECT:**
+```typescript
+import { useGlobalErrorHandler } from '@/hooks/use-global-error-handler';
+import { clientService } from '@/lib/services';
+import { queryKeys } from '@/lib/query-keys';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+
+export function useClients() {
+  const { handleFetchError, handleCrudError, handleCrudSuccess } = useGlobalErrorHandler();
+  const queryClient = useQueryClient();
+
+  const query = useQuery({
+    queryKey: queryKeys.clients.list(),
+    queryFn: async () => {
+      try {
+        return await clientService.list();
+      } catch (error) {
+        handleFetchError(error, 'client');
+        throw error;
+      }
+    }
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (data: CreateClientInput) => {
+      try {
+        const result = await clientService.create(data);
+        handleCrudSuccess('create', 'client', result.name);
+        return result;
+      } catch (error) {
+        handleCrudError(error, 'create', 'client', data.name);
+        throw error;
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.clients.list() });
+    }
+  });
+
+  return { query, createMutation };
+}
+```
+
+**❌ INCORRECT:**
+```typescript
+// P0 CRITICAL - Direct customFetch, no error handling
+export function useClients() {
+  const query = useQuery({
+    queryKey: ['clients'],
+    queryFn: async () => {
+      return await customFetch('/api/v1/clients'); // P0 CRITICAL
+    }
+  });
+}
+```
+
+### Cache Invalidation
+
+**Rule:** Always invalidate relevant queries after mutations.
+
+**✅ CORRECT:**
+```typescript
+const mutation = useMutation({
+  mutationFn: (data) => clientService.create(data),
+  onSuccess: () => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.clients.list() });
+  },
+});
+```
+
+### Optimistic Updates
+
+**Rule:** Use optimistic updates for better UX when appropriate.
+
+**✅ CORRECT:**
+```typescript
+const updateMutation = useMutation({
+  mutationFn: (data) => clientService.update(data.id, data),
+  onMutate: async (newData) => {
+    await queryClient.cancelQueries({ queryKey: queryKeys.clients.detail(newData.id) });
+    const previousData = queryClient.getQueryData(queryKeys.clients.detail(newData.id));
+    queryClient.setQueryData(queryKeys.clients.detail(newData.id), newData);
+    return { previousData };
+  },
+  onError: (err, newData, context) => {
+    queryClient.setQueryData(queryKeys.clients.detail(newData.id), context?.previousData);
+  },
+  onSettled: () => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.clients.list() });
+  },
+});
+```
+
+---
+
+## React Hook Form + Zod Validation
+
+### Form Setup
+
+**Rule:** All forms must use React Hook Form with Zod validation.
+
+**✅ CORRECT:**
+```typescript
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+
+const clientSchema = z.object({
+  name: z.string().min(1, 'Name is required'),
+  email: z.string().email('Invalid email address'),
+});
+
+type ClientFormData = z.infer<typeof clientSchema>;
+
+export function ClientForm() {
+  const form = useForm<ClientFormData>({
+    resolver: zodResolver(clientSchema),
+    defaultValues: {
+      name: '',
+      email: '',
+    },
+  });
+
+  const onSubmit = async (data: ClientFormData) => {
+    // Handle submission
+  };
+
+  return (
+    <form onSubmit={form.handleSubmit(onSubmit)}>
+      {/* Form fields */}
+    </form>
+  );
+}
+```
+
+### Form Field Patterns
+
+**Rule:** Use shadcn/ui Form components with React Hook Form integration.
+
+**✅ CORRECT:**
+```typescript
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
+import { Input } from '@/components/ui/input';
+
+<Form {...form}>
+  <FormField
+    control={form.control}
+    name="name"
+    render={({ field }) => (
+      <FormItem>
+        <FormLabel>Name</FormLabel>
+        <FormControl>
+          <Input {...field} />
+        </FormControl>
+        <FormMessage />
+      </FormItem>
+    )}
+  />
+</Form>
+```
+
+### Schema Organization
+
+**Rule:** Zod schemas should be in `/types/[feature]/[feature].schemas.ts`.
+
+**✅ CORRECT:**
+```typescript
+// types/client/client.schemas.ts
+import { z } from 'zod';
+
+export const createClientSchema = z.object({
+  name: z.string().min(1, 'Name is required'),
+  email: z.string().email('Invalid email address'),
+});
+
+export const updateClientSchema = createClientSchema.partial();
+
+export type CreateClientInput = z.infer<typeof createClientSchema>;
+export type UpdateClientInput = z.infer<typeof updateClientSchema>;
+```
+
+---
+
+## shadcn/ui Component Usage
+
+### Component Installation
+
+**Rule:** Use shadcn/ui components from `@/components/ui/`.
+
+**Available Components:**
+- Accordion, Alert Dialog, Avatar, Checkbox, Collapsible
+- Context Menu, Dialog, Dropdown Menu, Hover Card
+- Label, Menubar, Navigation Menu, Popover
+- Progress, Radio Group, Scroll Area, Select
+- Separator, Slider, Switch, Tabs
+- Toast, Toggle, Toggle Group, Tooltip
+
+### Dialog Pattern
+
+**Rule:** Use Dialog component for modals and forms.
+
+**✅ CORRECT:**
+```typescript
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
+
+<Dialog>
+  <DialogTrigger>Open</DialogTrigger>
+  <DialogContent>
+    <DialogHeader>
+      <DialogTitle>Title</DialogTitle>
+      <DialogDescription>Description</DialogDescription>
+    </DialogHeader>
+    {/* Content */}
+    <DialogFooter>
+      <Button>Cancel</Button>
+      <Button>Save</Button>
+    </DialogFooter>
+  </DialogContent>
+</Dialog>
+```
+
+### Toast Notifications
+
+**Rule:** Use sonner for toast notifications (integrated with useGlobalErrorHandler).
+
+**✅ CORRECT:**
+```typescript
+import { toast } from 'sonner';
+
+toast.success('Operation completed');
+toast.error('Operation failed');
+toast.info('Information message');
+```
+
+---
+
+## Tailwind CSS Patterns
+
+### Utility Classes
+
+**Rule:** Use Tailwind utility classes for styling. Avoid custom CSS when possible.
+
+**✅ CORRECT:**
+```typescript
+<div className="flex items-center justify-between p-4 bg-white rounded-lg shadow-md">
+  <h2 className="text-xl font-semibold text-gray-900">Title</h2>
+  <button className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+    Action
+  </button>
+</div>
+```
+
+### Responsive Design
+
+**Rule:** Mobile-first approach with Tailwind breakpoints.
+
+**✅ CORRECT:**
+```typescript
+<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+  {items.map(item => <Card key={item.id} {...item} />)}
+</div>
+```
+
+### Dark Mode (If Implemented)
+
+**Rule:** Use Tailwind dark mode classes when dark mode is implemented.
+
+**✅ CORRECT:**
+```typescript
+<div className="bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+  Content
+</div>
+```
+
+### Class Organization
+
+**Rule:** Organize classes logically: layout → spacing → typography → colors → effects.
+
+**✅ CORRECT:**
+```typescript
+<button className="
+  flex items-center justify-center
+  px-4 py-2
+  text-sm font-medium
+  bg-blue-600 text-white
+  rounded-lg shadow-md
+  hover:bg-blue-700
+  disabled:opacity-50 disabled:cursor-not-allowed
+">
+  Button
+</button>
+```
+
+---
+
+## Accessibility Requirements
+
+### Semantic HTML
+
+**Rule:** Use semantic HTML elements for better accessibility.
+
+**✅ CORRECT:**
+```typescript
+<nav>
+  <ul>
+    <li><a href="/clients">Clients</a></li>
+  </ul>
+</nav>
+
+<main>
+  <section>
+    <h1>Page Title</h1>
+    <article>Content</article>
+  </section>
+</main>
+```
+
+### ARIA Labels
+
+**Rule:** Provide ARIA labels for interactive elements without visible text.
+
+**✅ CORRECT:**
+```typescript
+<button aria-label="Close dialog">
+  <XIcon />
+</button>
+
+<input
+  type="search"
+  aria-label="Search clients"
+  placeholder="Search..."
+/>
+```
+
+### Keyboard Navigation
+
+**Rule:** Ensure all interactive elements are keyboard accessible.
+
+**✅ CORRECT:**
+```typescript
+<button
+  onClick={handleClick}
+  onKeyDown={(e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handleClick();
+    }
+  }}
+>
+  Action
+</button>
+```
+
+### Focus Management
+
+**Rule:** Manage focus for modals and dropdowns.
+
+**✅ CORRECT:**
+```typescript
+import { useEffect, useRef } from 'react';
+
+export function Modal({ isOpen }: { isOpen: boolean }) {
+  const firstInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isOpen && firstInputRef.current) {
+      firstInputRef.current.focus();
+    }
+  }, [isOpen]);
+
+  return (
+    <Dialog open={isOpen}>
+      <DialogContent>
+        <input ref={firstInputRef} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+```
+
+### Color Contrast
+
+**Rule:** Ensure color contrast ratios meet WCAG guidelines (minimum 4.5:1 for text).
+
+**✅ CORRECT:**
+```typescript
+// High contrast text
+<p className="text-gray-900 bg-white">Text</p>
+
+// Sufficient contrast for interactive elements
+<button className="bg-blue-600 text-white">Button</button>
+```
+
+---
+
+## Performance Optimization
+
+### Explicit Loading/Error/Empty State Checks
+
+**Rule:** Always check loading states explicitly before accessing data to prevent race conditions.
+
+**✅ CORRECT:**
+```typescript
+const { data, isLoading, error } = useQuery({ queryKey: ['clients'] });
+
+// Explicit loading check
+if (isLoading) {
+  return <LoadingSpinner />;
+}
+
+// Explicit error check
+if (error) {
+  return <ErrorState error={error} />;
+}
+
+// Explicit empty check
+if (!data || data.length === 0) {
+  return <EmptyState />;
+}
+
+// Safe to access data
+return <ClientsList clients={data} />;
+```
+
+**❌ INCORRECT:**
+```typescript
+// ❌ BAD: No explicit loading check
+const { data } = useQuery({ queryKey: ['clients'] });
+
+// Race condition: data might be undefined during initial load
+return <ClientsList clients={data} />; // Could crash if data is undefined
+
+// ❌ BAD: Assuming data exists
+const firstItem = data[0]; // Could be undefined
+```
+
+**Action:** Always check `isLoading`, `error`, and data existence before rendering. Use early returns for loading, error, and empty states.
+
+### Error Boundaries
+
+**Rule:** Wrap critical components (data displays, charts) with error boundaries to prevent crashes.
+
+**✅ CORRECT:**
+```typescript
+// Error boundary component
+'use client';
+
+import { Component, ReactNode } from 'react';
+
+interface ErrorBoundaryProps {
+  children: ReactNode;
+  fallback?: ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error?: Error;
+}
+
+export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    logger.error('[ErrorBoundary] Caught error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback || (
+        <div className="p-4 border border-red-300 rounded">
+          <h2>Something went wrong</h2>
+          <p>{this.state.error?.message}</p>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+// Usage
+<ErrorBoundary fallback={<ErrorDisplay />}>
+  <DataChart data={data} />
+</ErrorBoundary>
+```
+
+**❌ INCORRECT:**
+```typescript
+// ❌ BAD: No error handling
+function DataChart({ data }: { data: DataType[] }) {
+  return <Chart data={data} />; // Could crash entire screen if chart library throws
+}
+```
+
+**Action:** Always wrap chart rendering and data transformations in error boundaries. Use ErrorBoundary component for critical components.
+
+### Memoization
+
+**Rule:** Use React.memo, useCallback, and useMemo for performance-critical components.
+
+**✅ CORRECT:**
+```typescript
+import { memo, useMemo, useCallback } from 'react';
+
+interface ExpensiveComponentProps {
+  data: DataType[];
+  onAction: (id: string) => void;
+}
+
+export const ExpensiveComponent = memo<ExpensiveComponentProps>(({ data, onAction }) => {
+  const processedData = useMemo(() => processData(data), [data]);
+  const handleClick = useCallback((id: string) => {
+    onAction(id);
+  }, [onAction]);
+
+  return (
+    <div>
+      {processedData.map(item => (
+        <button key={item.id} onClick={() => handleClick(item.id)}>
+          {item.name}
+        </button>
+      ))}
+    </div>
+  );
+});
+```
+
+**Note:** React.memo is optional but recommended for performance-critical components. TypeScript interfaces are mandatory.
+
+### When to Use Memoization
+
+**useMemo:**
+- Expensive computations
+- Derived data/transformations
+- Object/array references for dependencies
+
+**useCallback:**
+- Callbacks passed as props to memoized components
+- Event handlers in dependency arrays
+
+**React.memo:**
+- Components that re-render frequently with same props
+- Expensive render operations
+
+### Code Splitting
+
+**Rule:** Use dynamic imports for large components or routes.
+
+**✅ CORRECT:**
+```typescript
+import dynamic from 'next/dynamic';
+
+const HeavyComponent = dynamic(() => import('@/components/HeavyComponent'), {
+  loading: () => <LoadingSpinner />,
+  ssr: false, // If component doesn't need SSR
+});
+```
+
+### Network Optimization
+
+**Debouncing**
+
+**Rule:** Debounce search inputs and user-triggered API calls (minimum 300ms).
+
+**✅ CORRECT:**
+```typescript
+import { useDebounce } from '@/hooks/use-debounce';
+
+const [searchQuery, setSearchQuery] = useState('');
+const debouncedQuery = useDebounce(searchQuery, 300);
+
+useEffect(() => {
+  if (debouncedQuery) {
+    // Perform search
+    refetch();
+  }
+}, [debouncedQuery]);
+```
+
+**❌ INCORRECT:**
+```typescript
+// ❌ BAD: No debouncing
+const handleSearch = (text: string) => {
+  searchAPI(text); // Called on every keystroke
+};
+```
+
+**Request Deduplication**
+
+**Rule:** TanStack Query automatically deduplicates identical queries. Don't manually deduplicate.
+
+**✅ CORRECT:**
+```typescript
+// TanStack Query handles deduplication
+const { data } = useQuery({
+  queryKey: ['clients'], // Multiple components with same key = one request
+  queryFn: fetchClients,
+});
+```
+
+### Memory Management
+
+**Rule:** Clean up event listeners, intervals, and subscriptions to prevent memory leaks.
+
+**✅ CORRECT:**
+```typescript
+useEffect(() => {
+  const interval = setInterval(() => {
+    // Periodic task
+  }, 1000);
+  
+  return () => clearInterval(interval); // Cleanup
+}, []);
+
+useEffect(() => {
+  const handleResize = () => {
+    // Handle resize
+  };
+  
+  window.addEventListener('resize', handleResize);
+  return () => window.removeEventListener('resize', handleResize); // Cleanup
+}, []);
+```
+
+**❌ INCORRECT:**
+```typescript
+// ❌ BAD: No cleanup
+useEffect(() => {
+  setInterval(() => {
+    // Memory leak - interval never cleared
+  }, 1000);
+}, []);
+
+// ❌ BAD: No cleanup
+useEffect(() => {
+  window.addEventListener('resize', handleResize); // Memory leak
+}, []);
+```
+
+**Action:** Always return cleanup functions from useEffect hooks. Clean up intervals, timeouts, event listeners, and subscriptions.
+
+### State Management Decision Tree
+
+**Rule:** Use the appropriate state management solution based on data type and scope.
+
+**Decision Tree:**
+```
+Is it server data?
+  ├─ Yes → Use TanStack Query
+  └─ No → Is it shared across many components?
+           ├─ Yes → Does it need persistence?
+                      ├─ Yes → Use Zustand
+                      └─ No → Use React Context
+           └─ No → Use useState
+```
+
+**Rules:**
+
+1. **Server State → TanStack Query**
+   - All API data
+   - Cached responses
+   - Background refetching
+
+2. **Persistent Client State → Zustand**
+   - User preferences
+   - Selected filters
+   - Theme settings
+   - UI state that needs persistence
+
+3. **Contextual State → React Context**
+   - Feature-level state
+   - Cross-cutting concerns
+   - Dependency injection
+
+4. **UI-Only State → useState**
+   - Form inputs
+   - Modal visibility
+   - Component-specific state
+
+**✅ CORRECT:**
+```typescript
+// Server state
+const { data } = useQuery({ queryKey: ['clients'] });
+
+// Persistent client state
+const { selectedProject, setSelectedProject } = useProjectsStore();
+
+// UI state
+const [isModalOpen, setIsModalOpen] = useState(false);
+```
+
+**❌ INCORRECT:**
+```typescript
+// ❌ BAD: Server state in Zustand
+const store = create((set) => ({
+  clients: [], // Should be in TanStack Query
+}));
+
+// ❌ BAD: Server state in useState
+const [clients, setClients] = useState([]); // No caching, no sync
+
+// ❌ BAD: Duplicate state
+// In TanStack Query: clients
+// In Zustand: clients (duplicate!)
+```
+
+---
+
+## Image Optimization
+
+### Next.js Image Component
+
+**Rule:** Always use Next.js `<Image>` component instead of `<img>` tag.
+
+**✅ CORRECT:**
+```typescript
+import Image from 'next/image';
+
+<Image
+  src="/logo.png"
+  alt="Logo"
+  width={200}
+  height={200}
+  priority={isAboveFold}
+/>
+```
+
+**❌ INCORRECT:**
+```typescript
+// P1 HIGH - Using img instead of Image
+<img src="/logo.png" alt="Logo" />
+```
+
+### Image Patterns
+
+**With Dimensions:**
+```typescript
+<Image
+  src="/image.jpg"
+  alt="Description"
+  width={800}
+  height={600}
+/>
+```
+
+**Fill Container:**
+```typescript
+<div className="relative w-full h-64">
+  <Image
+    src="/image.jpg"
+    alt="Description"
+    fill
+    className="object-cover"
+  />
+</div>
+```
+
+**Loading Strategies:**
+```typescript
+// Above the fold - load immediately
+<Image src="/hero.jpg" priority />
+
+// Below the fold - lazy load (default)
+<Image src="/content.jpg" loading="lazy" />
+```
+
+---
+
+## Quick Reference
+
+### Component Checklist
+- [ ] TypeScript interface for props
+- [ ] No `any` types
+- [ ] Loading states handled
+- [ ] Empty states handled
+- [ ] Error states handled
+- [ ] Accessibility (ARIA labels, keyboard navigation)
+- [ ] Responsive design (mobile-first)
+- [ ] Performance optimizations (memoization when needed)
+
+### Hooks Review Checklist
+
+**Rule:** All hooks must follow these requirements.
+
+**Checklist:**
+- [ ] All hooks checked for console statements (must use logger)
+- [ ] All hooks use service layer (not direct customFetch)
+- [ ] React Query hooks follow query key hierarchy from `lib/query-keys.ts`
+- [ ] Hooks use `useGlobalErrorHandler` for error handling
+- [ ] Hooks return proper types
+- [ ] Hooks use TanStack Query mutations correctly
+- [ ] Cache invalidation after mutations
+- [ ] Proper TypeScript types for all parameters and return values
+
+**✅ CORRECT:**
+```typescript
+import { useGlobalErrorHandler } from '@/hooks/use-global-error-handler';
+import { clientService } from '@/lib/services';
+import { queryKeys } from '@/lib/query-keys';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+
+export function useClients() {
+  const { handleFetchError, handleCrudError, handleCrudSuccess } = useGlobalErrorHandler();
+  const queryClient = useQueryClient();
+
+  const query = useQuery({
+    queryKey: queryKeys.clients.list(),
+    queryFn: async () => {
+      try {
+        return await clientService.list();
+      } catch (error) {
+        handleFetchError(error, 'client');
+        throw error;
+      }
+    }
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (data: CreateClientInput) => {
+      try {
+        const result = await clientService.create(data);
+        handleCrudSuccess('create', 'client', result.name);
+        return result;
+      } catch (error) {
+        handleCrudError(error, 'create', 'client', data.name);
+        throw error;
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.clients.list() });
+    }
+  });
+
+  return { query, createMutation };
+}
+```
+
+**❌ INCORRECT:**
+```typescript
+// P0 CRITICAL - Direct customFetch, no error handling
+export function useClients() {
+  const query = useQuery({
+    queryKey: ['clients'],
+    queryFn: async () => {
+      return await customFetch('/api/v1/clients'); // P0 CRITICAL
+    }
+  });
+}
+```
+
+---
+
+**Last Updated:** January 2025  
+**Maintained By:** Development Team  
+**Reference:** `docs/CODE_REVIEW_REQUIREMENTS.md`, `docs/tech-stack.md`

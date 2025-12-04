@@ -1,0 +1,772 @@
+# Backend Rules
+
+**Version:** 1.0  
+**Last Updated:** January 2025  
+**Project:** WebTrixPro CMS
+
+---
+
+## Table of Contents
+
+1. [API Route Patterns](#api-route-patterns)
+2. [PostgreSQL Raw SQL Usage](#postgresql-raw-sql-usage)
+3. [Service Layer Pattern](#service-layer-pattern)
+4. [Security Requirements](#security-requirements)
+5. [Auth0 Integration](#auth0-integration)
+6. [Database Connection Pooling](#database-connection-pooling)
+7. [Error Handling in API Routes](#error-handling-in-api-routes)
+
+---
+
+## API Route Patterns
+
+### Route Structure
+
+**Rule:** All API routes must follow the pattern `/api/v1/[feature]/route.ts`.
+
+**Structure:**
+```
+/app/api/v1/
+  /clients/
+    route.ts          # GET (list), POST (create)
+  /clients/[id]/
+    route.ts          # GET (detail), PATCH (update), DELETE (delete)
+```
+
+### Route Handler Pattern
+
+**Rule:** API routes must use Next.js App Router route handlers with proper HTTP methods.
+
+**✅ CORRECT:**
+```typescript
+// app/api/v1/clients/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { db } from '@/lib/db/connection';
+import { createClientSchema } from '@/types/client/client.schemas';
+import { logger } from '@/lib/logger';
+
+export async function GET(request: NextRequest) {
+  try {
+    const clients = await db.query('SELECT * FROM clients WHERE deleted_at IS NULL');
+    return NextResponse.json(clients.rows);
+  } catch (error) {
+    logger.error('[API] GET /api/v1/clients error:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch clients' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const validatedData = createClientSchema.parse(body);
+    
+    const result = await db.query(
+      'INSERT INTO clients (name, email) VALUES ($1, $2) RETURNING *',
+      [validatedData.name, validatedData.email]
+    );
+    
+    return NextResponse.json(result.rows[0], { status: 201 });
+  } catch (error) {
+    logger.error('[API] POST /api/v1/clients error:', error);
+    return NextResponse.json(
+      { error: 'Failed to create client' },
+      { status: 500 }
+    );
+  }
+}
+```
+
+### Route Handler with ID Parameter
+
+**✅ CORRECT:**
+```typescript
+// app/api/v1/clients/[id]/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { db } from '@/lib/db/connection';
+import { updateClientSchema } from '@/types/client/client.schemas';
+import { logger } from '@/lib/logger';
+
+export async function GET(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const result = await db.query(
+      'SELECT * FROM clients WHERE id = $1 AND deleted_at IS NULL',
+      [params.id]
+    );
+    
+    if (result.rows.length === 0) {
+      return NextResponse.json(
+        { error: 'Client not found' },
+        { status: 404 }
+      );
+    }
+    
+    return NextResponse.json(result.rows[0]);
+  } catch (error) {
+    logger.error('[API] GET /api/v1/clients/[id] error:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch client' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const body = await request.json();
+    const validatedData = updateClientSchema.parse(body);
+    
+    const updates: string[] = [];
+    const values: unknown[] = [];
+    let paramIndex = 1;
+    
+    if (validatedData.name) {
+      updates.push(`name = $${paramIndex++}`);
+      values.push(validatedData.name);
+    }
+    if (validatedData.email) {
+      updates.push(`email = $${paramIndex++}`);
+      values.push(validatedData.email);
+    }
+    
+    values.push(params.id);
+    
+    const result = await db.query(
+      `UPDATE clients SET ${updates.join(', ')}, updated_at = NOW() WHERE id = $${paramIndex} AND deleted_at IS NULL RETURNING *`,
+      values
+    );
+    
+    if (result.rows.length === 0) {
+      return NextResponse.json(
+        { error: 'Client not found' },
+        { status: 404 }
+      );
+    }
+    
+    return NextResponse.json(result.rows[0]);
+  } catch (error) {
+    logger.error('[API] PATCH /api/v1/clients/[id] error:', error);
+    return NextResponse.json(
+      { error: 'Failed to update client' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const result = await db.query(
+      'UPDATE clients SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING *',
+      [params.id]
+    );
+    
+    if (result.rows.length === 0) {
+      return NextResponse.json(
+        { error: 'Client not found' },
+        { status: 404 }
+      );
+    }
+    
+    return NextResponse.json({ message: 'Client deleted' });
+  } catch (error) {
+    logger.error('[API] DELETE /api/v1/clients/[id] error:', error);
+    return NextResponse.json(
+      { error: 'Failed to delete client' },
+      { status: 500 }
+    );
+  }
+}
+```
+
+### HTTP Status Codes
+
+**Rule:** Use appropriate HTTP status codes.
+
+- `200` - Success (GET, PATCH)
+- `201` - Created (POST)
+- `204` - No Content (DELETE)
+- `400` - Bad Request (validation errors)
+- `401` - Unauthorized (authentication required)
+- `403` - Forbidden (insufficient permissions)
+- `404` - Not Found
+- `500` - Internal Server Error
+
+---
+
+## PostgreSQL Raw SQL Usage
+
+### Rule: No ORM - Use Raw SQL
+
+**Rule:** Database access must use raw SQL with the `pg` library. No ORM allowed.
+
+**✅ CORRECT:**
+```typescript
+import { db } from '@/lib/db/connection';
+
+const result = await db.query(
+  'SELECT * FROM clients WHERE id = $1 AND deleted_at IS NULL',
+  [clientId]
+);
+```
+
+**❌ INCORRECT:**
+```typescript
+// P0 CRITICAL - Using ORM
+const client = await ClientModel.findById(clientId);
+```
+
+### Parameterized Queries
+
+**Rule:** ALWAYS use parameterized queries to prevent SQL injection.
+
+**✅ CORRECT:**
+```typescript
+await db.query(
+  'INSERT INTO clients (name, email) VALUES ($1, $2)',
+  [name, email]
+);
+```
+
+**❌ INCORRECT:**
+```typescript
+// P0 CRITICAL - SQL injection vulnerability
+await db.query(`INSERT INTO clients (name, email) VALUES ('${name}', '${email}')`);
+```
+
+### Query Patterns
+
+**SELECT:**
+```typescript
+const result = await db.query(
+  'SELECT id, name, email FROM clients WHERE deleted_at IS NULL ORDER BY created_at DESC'
+);
+const clients = result.rows;
+```
+
+**INSERT:**
+```typescript
+const result = await db.query(
+  'INSERT INTO clients (name, email) VALUES ($1, $2) RETURNING *',
+  [name, email]
+);
+const newClient = result.rows[0];
+```
+
+**UPDATE:**
+```typescript
+const result = await db.query(
+  'UPDATE clients SET name = $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL RETURNING *',
+  [newName, clientId]
+);
+const updatedClient = result.rows[0];
+```
+
+**DELETE (Soft Delete):**
+```typescript
+const result = await db.query(
+  'UPDATE clients SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING *',
+  [clientId]
+);
+```
+
+### Transaction Handling
+
+**Rule:** Use transactions for operations that must succeed or fail together.
+
+**✅ CORRECT:**
+```typescript
+const client = await db.connect();
+try {
+  await client.query('BEGIN');
+  
+  await client.query('INSERT INTO clients (name, email) VALUES ($1, $2)', [name, email]);
+  await client.query('INSERT INTO client_contacts (client_id, phone) VALUES ($1, $2)', [clientId, phone]);
+  
+  await client.query('COMMIT');
+} catch (error) {
+  await client.query('ROLLBACK');
+  throw error;
+} finally {
+  client.release();
+}
+```
+
+---
+
+## Service Layer Pattern
+
+### Rule: All Services Must Extend BaseService
+
+**Rule:** ALL service files in `lib/services/` MUST extend BaseService and use centralized logger.
+
+**✅ CORRECT:**
+```typescript
+// lib/services/clients/ClientService.ts
+import { logger } from '@/lib/logger';
+import { BaseService } from '../base/BaseService';
+import type { Client, CreateClientInput, UpdateClientInput } from '@/types/client/client.types';
+
+export class ClientService extends BaseService<Client, CreateClientInput, UpdateClientInput> {
+  protected getBasePath(): string {
+    return '/api/v1/clients';
+  }
+
+  async getByEmail(email: string): Promise<Client | null> {
+    logger.debug('[ClientService] Getting client by email:', email);
+    try {
+      const result = await this.customFetch<Client[]>(`${this.getBasePath()}?email=${email}`);
+      return result[0] || null;
+    } catch (error) {
+      logger.error('[ClientService] Error getting client by email:', error);
+      throw error;
+    }
+  }
+}
+
+export const clientService = new ClientService();
+```
+
+**❌ INCORRECT:**
+```typescript
+// P0 CRITICAL - Not extending BaseService, using console.log
+export class ClientService {
+  async get(id: string) {
+    console.log('[ClientService] Getting client:', id); // P0 CRITICAL
+    return await customFetch(`/api/v1/clients/${id}`);
+  }
+}
+```
+
+### Service Registration
+
+**Rule:** All services must be exported from `lib/services/index.ts`.
+
+**✅ CORRECT:**
+```typescript
+// lib/services/index.ts
+export { clientService } from './clients/ClientService';
+export { projectService } from './projects/ProjectService';
+// ... other services
+```
+
+### Service Method Patterns
+
+**Standard CRUD (inherited from BaseService):**
+```typescript
+// These are automatically available from BaseService
+await clientService.list();        // GET /api/v1/clients
+await clientService.get(id);      // GET /api/v1/clients/:id
+await clientService.create(data);  // POST /api/v1/clients
+await clientService.update(id, data); // PATCH /api/v1/clients/:id
+await clientService.delete(id);   // DELETE /api/v1/clients/:id
+```
+
+**Custom Methods:**
+```typescript
+// Add custom methods as needed
+async getByEmail(email: string): Promise<Client | null> {
+  // Implementation
+}
+```
+
+### Service Error Handling
+
+**Rule:** Services should log errors but let hooks handle user-facing error messages.
+
+**✅ CORRECT:**
+```typescript
+async customMethod(): Promise<Client> {
+  logger.debug('[ClientService] Custom method called');
+  try {
+    return await this.customFetch<Client>(`${this.getBasePath()}/custom`);
+  } catch (error) {
+    logger.error('[ClientService] Custom method error:', error);
+    throw error; // Let hook handle user-facing error
+  }
+}
+```
+
+---
+
+## Security Requirements
+
+### Input Validation
+
+**Rule:** ALL API inputs must be validated with Zod schemas.
+
+**✅ CORRECT:**
+```typescript
+import { createClientSchema } from '@/types/client/client.schemas';
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const validatedData = createClientSchema.parse(body);
+    // Use validatedData
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return NextResponse.json(
+        { error: 'Validation error', details: error.errors },
+        { status: 400 }
+      );
+    }
+    throw error;
+  }
+}
+```
+
+### SQL Injection Prevention
+
+**Rule:** ALWAYS use parameterized queries. Never concatenate user input into SQL.
+
+**✅ CORRECT:**
+```typescript
+await db.query('SELECT * FROM clients WHERE id = $1', [clientId]);
+```
+
+**❌ INCORRECT:**
+```typescript
+// P0 CRITICAL - SQL injection vulnerability
+await db.query(`SELECT * FROM clients WHERE id = '${clientId}'`);
+```
+
+### Authentication & Authorization
+
+**Rule:** All protected routes must verify authentication and authorization.
+
+**✅ CORRECT:**
+```typescript
+import { getSession } from '@auth0/nextjs-auth0';
+
+export async function GET(request: NextRequest) {
+  const session = await getSession(request);
+  
+  if (!session) {
+    return NextResponse.json(
+      { error: 'Unauthorized' },
+      { status: 401 }
+    );
+  }
+  
+  // Check permissions if needed
+  if (!hasPermission(session.user, 'clients:read')) {
+    return NextResponse.json(
+      { error: 'Forbidden' },
+      { status: 403 }
+    );
+  }
+  
+  // Continue with request
+}
+```
+
+### Rate Limiting
+
+**Rule:** Implement rate limiting on API endpoints.
+
+**✅ CORRECT:**
+```typescript
+import { rateLimit } from '@/middlewares/rate-limit';
+
+export async function POST(request: NextRequest) {
+  const rateLimitResult = await rateLimit(request);
+  
+  if (!rateLimitResult.success) {
+    return NextResponse.json(
+      { error: 'Too many requests' },
+      { status: 429 }
+    );
+  }
+  
+  // Continue with request
+}
+```
+
+### Environment Variables
+
+**Rule:** Never expose credentials. Store all secrets in environment variables.
+
+**✅ CORRECT:**
+```typescript
+const dbPassword = process.env.DATABASE_PASSWORD;
+if (!dbPassword) {
+  throw new Error('DATABASE_PASSWORD is not set');
+}
+```
+
+**❌ INCORRECT:**
+```typescript
+// P0 CRITICAL - Exposed credentials
+const dbPassword = 'hardcoded-password';
+```
+
+---
+
+## Auth0 Integration
+
+### Session Management
+
+**Rule:** Use Auth0 Next.js SDK for session management.
+
+**✅ CORRECT:**
+```typescript
+import { getSession } from '@auth0/nextjs-auth0';
+
+export async function GET(request: NextRequest) {
+  const session = await getSession(request);
+  
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  
+  // Use session.user for user information
+  const userId = session.user.sub;
+}
+```
+
+### Role-Based Access Control (RBAC)
+
+**Rule:** Check user roles and permissions before allowing operations.
+
+**✅ CORRECT:**
+```typescript
+import { hasRole, hasPermission } from '@/lib/auth/permissions';
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const session = await getSession(request);
+  
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  
+  // Check permission
+  if (!hasPermission(session.user, 'clients:delete')) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+  
+  // Proceed with deletion
+}
+```
+
+### User Context
+
+**Rule:** Include user context in audit logs and soft deletes.
+
+**✅ CORRECT:**
+```typescript
+const session = await getSession(request);
+const userId = session.user.sub;
+
+await db.query(
+  'UPDATE clients SET deleted_at = NOW(), deleted_by = $1 WHERE id = $2',
+  [userId, clientId]
+);
+```
+
+---
+
+## Database Connection Pooling
+
+### Connection Setup
+
+**Rule:** Use connection pooling for database connections.
+
+**✅ CORRECT:**
+```typescript
+// lib/db/connection.ts
+import { Pool } from 'pg';
+
+const pool = new Pool({
+  host: process.env.DATABASE_HOST,
+  port: parseInt(process.env.DATABASE_PORT || '5432'),
+  database: process.env.DATABASE_NAME,
+  user: process.env.DATABASE_USER,
+  password: process.env.DATABASE_PASSWORD,
+  max: 20, // Maximum pool size
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
+});
+
+export const db = {
+  query: (text: string, params?: unknown[]) => pool.query(text, params),
+  connect: () => pool.connect(),
+};
+```
+
+### Connection Usage
+
+**Rule:** Use the pooled connection for all queries.
+
+**✅ CORRECT:**
+```typescript
+import { db } from '@/lib/db/connection';
+
+const result = await db.query('SELECT * FROM clients');
+```
+
+### Connection Cleanup
+
+**Rule:** Ensure connections are properly released in error cases.
+
+**✅ CORRECT:**
+```typescript
+const client = await db.connect();
+try {
+  await client.query('BEGIN');
+  // ... operations
+  await client.query('COMMIT');
+} catch (error) {
+  await client.query('ROLLBACK');
+  throw error;
+} finally {
+  client.release();
+}
+```
+
+---
+
+## Error Handling in API Routes
+
+### Error Response Pattern
+
+**Rule:** All API errors must return consistent error responses.
+
+**✅ CORRECT:**
+```typescript
+try {
+  // Operation
+} catch (error) {
+  logger.error('[API] Error:', error);
+  
+  if (error instanceof z.ZodError) {
+    return NextResponse.json(
+      { error: 'Validation error', details: error.errors },
+      { status: 400 }
+    );
+  }
+  
+  if (error instanceof Error && error.message.includes('not found')) {
+    return NextResponse.json(
+      { error: error.message },
+      { status: 404 }
+    );
+  }
+  
+  return NextResponse.json(
+    { error: 'Internal server error' },
+    { status: 500 }
+  );
+}
+```
+
+### Error Logging
+
+**Rule:** Log all errors with context using the centralized logger.
+
+**✅ CORRECT:**
+```typescript
+import { logger } from '@/lib/logger';
+
+try {
+  // Operation
+} catch (error) {
+  logger.error('[API] POST /api/v1/clients error:', {
+    error,
+    userId: session?.user?.sub,
+    body: request.body,
+  });
+  // Return error response
+}
+```
+
+### Error Types
+
+**Validation Errors (400):**
+```typescript
+return NextResponse.json(
+  { error: 'Validation error', details: zodError.errors },
+  { status: 400 }
+);
+```
+
+**Authentication Errors (401):**
+```typescript
+return NextResponse.json(
+  { error: 'Unauthorized' },
+  { status: 401 }
+);
+```
+
+**Authorization Errors (403):**
+```typescript
+return NextResponse.json(
+  { error: 'Forbidden' },
+  { status: 403 }
+);
+```
+
+**Not Found Errors (404):**
+```typescript
+return NextResponse.json(
+  { error: 'Resource not found' },
+  { status: 404 }
+);
+```
+
+**Server Errors (500):**
+```typescript
+return NextResponse.json(
+  { error: 'Internal server error' },
+  { status: 500 }
+);
+```
+
+---
+
+## Quick Reference
+
+### API Route Checklist
+- [ ] Follows `/api/v1/[feature]/route.ts` pattern
+- [ ] Uses proper HTTP methods (GET, POST, PATCH, DELETE)
+- [ ] Validates input with Zod schemas
+- [ ] Uses parameterized SQL queries
+- [ ] Handles authentication/authorization
+- [ ] Returns appropriate HTTP status codes
+- [ ] Logs errors with centralized logger
+- [ ] Returns consistent error responses
+
+### Service Checklist
+- [ ] Extends BaseService
+- [ ] Uses centralized logger (not console.*)
+- [ ] Exported from `lib/services/index.ts`
+- [ ] Uses customFetch internally (not exposed)
+- [ ] Proper TypeScript types
+
+### Security Checklist
+- [ ] Input validation with Zod
+- [ ] Parameterized SQL queries
+- [ ] Authentication checks
+- [ ] Authorization checks
+- [ ] Rate limiting (where applicable)
+- [ ] No exposed credentials
+- [ ] Environment variables for secrets
+
+---
+
+**Last Updated:** January 2025  
+**Maintained By:** Development Team  
+**Reference:** `docs/CODE_REVIEW_REQUIREMENTS.md`, `docs/tech-stack.md`

@@ -1,0 +1,1005 @@
+# Project-Wide Rules
+
+**Version:** 1.0  
+**Last Updated:** January 2025  
+**Project:** WebTrixPro CMS
+
+---
+
+## Table of Contents
+
+1. [TypeScript Typing Requirements](#typescript-typing-requirements)
+2. [Code Reusability (DRY Principle)](#code-reusability-dry-principle)
+3. [Centralized Logging](#centralized-logging)
+4. [Error Handling](#error-handling)
+5. [Type Centralization](#type-centralization)
+6. [Responsive Design](#responsive-design)
+7. [Testing Guidelines](#testing-guidelines)
+8. [Code Quality Standards](#code-quality-standards)
+   - [Code Review Process](#code-review-process)
+   - [Code Review Systematic Checklist](#code-review-systematic-checklist)
+   - [Code Review Priorities](#code-review-priorities)
+   - [Merge Quality Gates](#merge-quality-gates)
+   - [Code Review Best Practices](#code-review-best-practices)
+   - [Code Review Report Template](#code-review-report-template)
+   - [File Naming Conventions](#file-naming-conventions)
+   - [Summary Checklist](#summary-checklist)
+
+---
+
+## TypeScript Typing Requirements
+
+### MANDATORY: All Component Props Must Have Interfaces
+
+**Rule:** ALL React components MUST have explicit TypeScript interfaces for their props. This is a P0 CRITICAL requirement.
+
+**✅ CORRECT:**
+```typescript
+interface MyComponentProps {
+  title: string;
+  data: DataType[];
+  onAction: (id: string) => void;
+  isLoading?: boolean;
+}
+
+export function MyComponent({ title, data, onAction, isLoading }: MyComponentProps) {
+  // Implementation
+}
+```
+
+**❌ INCORRECT:**
+```typescript
+// P0 CRITICAL - Missing interface, any types
+export function MyComponent({ title, data, onAction }: { title: any; data: any; onAction: any }) {
+  // Implementation
+}
+```
+
+### No `any` Types in Production Code
+
+**Rule:** Never use `any` types. Use `unknown` with type guards when the type is truly unknown.
+
+**✅ CORRECT:**
+```typescript
+function processData(input: InputType): OutputType {
+  // Implementation
+}
+
+catch (error: unknown) {
+  if (error instanceof Error) {
+    logger.error(error.message);
+  }
+}
+```
+
+**❌ INCORRECT:**
+```typescript
+// P0 CRITICAL - any types
+function processData(input: any): any {
+  // Implementation
+}
+
+catch (error: any) {
+  logger.error(error.message);
+}
+```
+
+### Service Method Typing
+
+**Rule:** All service methods must have explicit parameter and return types.
+
+**✅ CORRECT:**
+```typescript
+export class ClientService extends BaseService<Client, CreateClientInput, UpdateClientInput> {
+  async getByEmail(email: string): Promise<Client | null> {
+    // Implementation
+  }
+}
+```
+
+**❌ INCORRECT:**
+```typescript
+// P0 CRITICAL - Missing types
+export class ClientService {
+  async getByEmail(email: any): Promise<any> {
+    // Implementation
+  }
+}
+```
+
+### Data Structure Typing
+
+**Rule:** Use union types for constrained values, interfaces for data structures.
+
+**✅ CORRECT:**
+```typescript
+type Status = 'active' | 'inactive' | 'suspended';
+type ClientType = 'individual' | 'company';
+
+interface Client {
+  id: string;
+  name: string;
+  type: ClientType;
+  status: Status;
+}
+```
+
+**❌ INCORRECT:**
+```typescript
+// P1 HIGH - Missing union types
+const status: string = 'active'; // Should be Status type
+```
+
+---
+
+## Code Reusability (DRY Principle)
+
+### Rule: Never Duplicate Code Across Modules
+
+**Checklist:**
+- [ ] No duplicate functions across modules
+- [ ] No duplicate component logic
+- [ ] Shared utilities in `lib/utils/` or `components/shared/`
+- [ ] Generic components used with configuration objects
+- [ ] Module-specific wrappers only provide configuration
+
+### Common Duplications to Avoid
+
+1. **Error Message Extraction** - Use `getErrorMessage` from `lib/error-messages.ts`
+2. **Date Formatting** - Use centralized date utilities
+3. **Table Components** - Use generic `DataTable<T>` component
+4. **Dialog Components** - Use generic dialog components with configuration
+5. **Form Components** - Use generic form components with schemas
+
+**Action:** 
+1. **Before writing new code:** Check if a shared utility exists in `lib/utils/` or `components/shared/`
+2. **If duplicate logic is found:** Extract it to a shared utility immediately (HIGH priority)
+3. **Common transformations:** Always use existing utility functions (date formatting, error handling, etc.)
+4. **Service methods:** Never duplicate transformation logic - use shared utilities
+
+### Module Decoupling
+
+**Rule:** Components must be reusable across modules. Never hardcode module-specific logic, text, or references.
+
+**✅ CORRECT:**
+```typescript
+// Generic component with config
+interface DataTableConfig<T> {
+  moduleName: string; // Passed as prop
+  emptyStateMessage?: string; // Configurable
+}
+
+export function DataTable<T>({ config, data }: DataTableProps<T>) {
+  return (
+    <div>
+      {!data.length && (
+        <EmptyState message={config.emptyStateMessage || `No ${config.moduleName} data found`} />
+      )}
+    </div>
+  );
+}
+```
+
+**❌ INCORRECT:**
+```typescript
+// ❌ BAD: Hardcoded module-specific text
+export function DataTable() {
+  return <div>No Clients Found</div>; // Hardcoded "Clients"
+}
+
+// ❌ BAD: Hardcoded module-specific logic
+export function DataTable() {
+  const color = module === 'clients' ? 'blue' : 'green'; // Hardcoded logic
+}
+```
+
+**Action:** Use props, configuration objects, or custom hooks to make components module-agnostic. All module-specific values must be passed as props or configuration.
+
+**✅ CORRECT:**
+```typescript
+// Generic component in components/shared/
+export function DataTable<T>({ data, columns }: DataTableProps<T>) {
+  // Single implementation
+}
+
+// Module-specific wrapper (configuration only)
+export function ClientsTable({ clients }: { clients: Client[] }) {
+  return <DataTable data={clients} columns={clientColumns} />;
+}
+```
+
+**❌ INCORRECT:**
+```typescript
+// P1 HIGH - Duplicate implementation
+export function ClientsTable({ clients }: { clients: Client[] }) {
+  // Duplicate table logic
+}
+
+export function SuppliersTable({ suppliers }: { suppliers: Supplier[] }) {
+  // Same duplicate logic
+}
+```
+
+### Component Pattern Duplication Audit
+
+**Rule:** Systematically check ALL similar component patterns across modules for duplication.
+
+**Patterns to Check:**
+1. Data Tables - All modules
+2. Add/Edit Dialogs - All modules
+3. Form Components - All modules
+4. Card Components - All modules
+5. Detail Views - All modules
+
+**✅ CORRECT:**
+```typescript
+// Generic component in components/shared/
+export function DataTable<T>({ data, columns }: DataTableProps<T>) {
+  // Single implementation
+}
+
+// Module-specific wrapper (configuration only)
+export function ClientsTable({ clients }: { clients: Client[] }) {
+  return <DataTable data={clients} columns={clientColumns} />;
+}
+```
+
+**❌ INCORRECT:**
+```typescript
+// P1 HIGH - Duplicate implementation
+export function ClientsTable({ clients }: { clients: Client[] }) {
+  // Duplicate table logic
+}
+
+export function SuppliersTable({ suppliers }: { suppliers: Supplier[] }) {
+  // Same duplicate logic
+}
+```
+
+**Action:** 
+1. Identify common patterns across modules
+2. Extract to generic components in `components/shared/`
+3. Module-specific wrappers only provide configuration
+4. Never duplicate component logic
+
+---
+
+## Centralized Logging
+
+### Rule: ALL Logging Must Use Centralized Logger
+
+**Rule:** ALL logging must use centralized `logger` from `@/lib/logger`. Never use `console.log`, `console.error`, `console.warn`, or `console.info` directly.
+
+**Checklist:**
+- [ ] All service files checked (`lib/services/`)
+- [ ] All hooks checked
+- [ ] All components checked
+- [ ] All logging uses `logger` utility
+- [ ] Logger automatically handles production vs development
+
+**✅ CORRECT:**
+```typescript
+import { logger } from '@/lib/logger';
+
+logger.debug('[ComponentName] Debug info:', data);
+logger.info('[ComponentName] Info message');
+logger.warn('[ComponentName] Warning message');
+logger.error('[ComponentName] Error message');
+```
+
+**❌ INCORRECT:**
+```typescript
+// P0 CRITICAL - Direct console usage
+console.log('[ComponentName] Debug info:', data);
+console.error('[ComponentName] Error:', error);
+```
+
+### Logger Usage Patterns
+
+**Service Layer:**
+```typescript
+import { logger } from '@/lib/logger';
+
+export class ClientService extends BaseService<Client, CreateClientInput, UpdateClientInput> {
+  async customMethod(): Promise<Client> {
+    logger.debug('[ClientService] Custom method called');
+    // Implementation
+  }
+}
+```
+
+**Hooks:**
+```typescript
+import { logger } from '@/lib/logger';
+
+export function useClients() {
+  useEffect(() => {
+    logger.debug('[useClients] Hook initialized');
+  }, []);
+}
+```
+
+**Components:**
+```typescript
+import { logger } from '@/lib/logger';
+
+export function MyComponent({ data }: MyComponentProps) {
+  useEffect(() => {
+    logger.debug('[MyComponent] Component mounted', { dataCount: data.length });
+  }, [data]);
+}
+```
+
+---
+
+## Error Handling
+
+### Rule: All Errors Must Use useGlobalErrorHandler
+
+**Rule:** All errors must use `useGlobalErrorHandler` hook for consistent error handling and automatic toast notifications.
+
+**Checklist:**
+- [ ] All error handling uses `useGlobalErrorHandler`
+- [ ] Error messages are user-friendly
+- [ ] Technical errors logged with logger
+- [ ] User-facing errors are clear and actionable
+
+**✅ CORRECT:**
+```typescript
+import { useGlobalErrorHandler } from '@/hooks/use-global-error-handler';
+
+function MyComponent() {
+  const { handleCrudError, handleCrudSuccess, handleFetchError } = useGlobalErrorHandler();
+
+  const createItem = async (data: CreateInput) => {
+    try {
+      const result = await service.create(data);
+      handleCrudSuccess('create', 'client', result.name);
+      return result;
+    } catch (error) {
+      handleCrudError(error, 'create', 'client', data.name);
+      throw error;
+    }
+  };
+}
+```
+
+**❌ INCORRECT:**
+```typescript
+// P0 CRITICAL - Missing error handling
+const createItem = async (data: CreateInput) => {
+  const result = await service.create(data); // No error handling!
+};
+```
+
+### User Feedback Requirement
+
+**Rule:** ALL asynchronous operations MUST provide explicit success and error notifications via `useGlobalErrorHandler`.
+
+**✅ CORRECT:**
+```typescript
+const { handleCrudSuccess, handleCrudError } = useGlobalErrorHandler();
+
+const handleSave = async () => {
+  try {
+    const result = await service.create(data);
+    handleCrudSuccess('create', 'client', result.name); // Automatic toast
+  } catch (error) {
+    handleCrudError(error, 'create', 'client', data.name); // Automatic toast
+  }
+};
+```
+
+**❌ INCORRECT:**
+```typescript
+// P0 CRITICAL - Missing user feedback
+const handleSave = async () => {
+  await service.create(data); // No feedback!
+};
+```
+
+---
+
+## Type Centralization
+
+### Rule: All Types Must Be Centralized
+
+**Rule:** All TypeScript types and interfaces must be centralized in the `/types/` directory.
+
+**Structure:**
+```
+/types/
+  /[feature]/
+    [feature].types.ts    # Main types
+    [feature].schemas.ts  # Zod schemas
+```
+
+**✅ CORRECT:**
+```typescript
+// types/client.types.ts
+export interface Client {
+  id: string;
+  name: string;
+  email: string;
+}
+
+export interface CreateClientInput {
+  name: string;
+  email: string;
+}
+
+export interface UpdateClientInput {
+  name?: string;
+  email?: string;
+}
+```
+
+**❌ INCORRECT:**
+```typescript
+// P1 HIGH - Types scattered in components
+// In component file
+interface Client {
+  id: string;
+  name: string;
+}
+```
+
+### Type Organization
+
+1. **Domain Types** - Core business entities (`Client`, `Project`, etc.)
+2. **Input Types** - Create/Update inputs (`CreateClientInput`, `UpdateClientInput`)
+3. **API Types** - API request/response types
+4. **Utility Types** - Shared utility types
+5. **Schema Types** - Zod schema types
+
+---
+
+## Responsive Design
+
+### Rule: Mobile-First Approach
+
+**Rule:** All components must be mobile-first with Tailwind breakpoints. All views must be functional at 360px width (no horizontal scrolling).
+
+**Checklist:**
+- [ ] Mobile-first approach with Tailwind breakpoints
+- [ ] All views functional at 360px width (no horizontal scrolling)
+- [ ] Responsive typography (font sizes adapt to screen size)
+- [ ] Layout adapts to different screen sizes
+- [ ] Detail dialogs wrap content with `overflow-y-auto` for small screens
+
+**✅ CORRECT:**
+```typescript
+<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+  {items.map(item => <Card key={item.id} {...item} />)}
+</div>
+```
+
+**❌ INCORRECT:**
+```typescript
+// P1 HIGH - Not responsive
+<div className="grid grid-cols-3 gap-4">
+  {items.map(item => <Card key={item.id} {...item} />)}
+</div>
+```
+
+### Tailwind Breakpoints
+
+- `sm:` - 640px and up
+- `md:` - 768px and up
+- `lg:` - 1024px and up
+- `xl:` - 1280px and up
+- `2xl:` - 1536px and up
+
+### Responsive Patterns
+
+**Grid Layouts:**
+```typescript
+// Mobile: 1 column, Tablet: 2 columns, Desktop: 3 columns
+<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+```
+
+**Flexible Typography:**
+```typescript
+// Responsive text sizes
+<h1 className="text-2xl sm:text-3xl lg:text-4xl">Title</h1>
+```
+
+**Dialog/Modal Responsiveness:**
+```typescript
+<DialogContent className="max-h-[90vh] overflow-y-auto">
+  {/* Content */}
+</DialogContent>
+```
+
+---
+
+## Testing Guidelines
+
+### Testing Stack
+
+- **Vitest 4.0.12** - Unit testing
+- **Playwright 1.56.1** - E2E testing
+- **@testing-library/react 16.3.0** - React testing utilities
+
+### Testing Requirements
+
+**Checklist:**
+- [ ] Unit tests for data transformation hooks (Vitest)
+- [ ] Integration tests for API endpoints
+- [ ] E2E tests for critical user flows (Playwright)
+- [ ] Tests use mock data appropriately
+- [ ] Tests cover error cases
+- [ ] Test coverage maintained for critical paths
+
+### Test Organization
+
+```
+/tests/
+  /unit/          # Unit tests (Vitest)
+  /integration/   # Integration tests
+  /e2e/           # E2E tests (Playwright)
+  /mocks/         # Mock data and utilities
+```
+
+### Testing Patterns
+
+**Unit Test Example:**
+```typescript
+import { describe, it, expect } from 'vitest';
+import { processData } from '@/hooks/use-data-processor';
+
+describe('processData', () => {
+  it('should process data correctly', () => {
+    const input = { /* test data */ };
+    const result = processData(input);
+    expect(result).toEqual(expectedOutput);
+  });
+});
+```
+
+**E2E Test Example:**
+```typescript
+import { test, expect } from '@playwright/test';
+
+test('user can create a client', async ({ page }) => {
+  await page.goto('/clients');
+  await page.click('text=Add Client');
+  await page.fill('[name="name"]', 'Test Client');
+  await page.click('button[type="submit"]');
+  await expect(page.locator('text=Test Client')).toBeVisible();
+});
+```
+
+---
+
+## Code Quality Standards
+
+### Code Review Process
+
+**Rule:** Follow a systematic code review process for all changes.
+
+#### Pre-Review Preparation
+
+1. **Review Context:**
+   - Understand the PR/change purpose
+   - Review related issues or requirements
+   - Check if this is a new feature, bug fix, or refactor
+
+2. **Review Scope:**
+   - All changed files
+   - Related files that might be affected
+   - Dependencies and imports
+
+3. **Review Tools:**
+   - Use systematic checklist (see below)
+   - Check cursor rules: `.cursor/rules/`
+   - Reference project documentation in `docs/`
+   - Use grep/search tools for pattern detection
+
+#### Review Execution
+
+1. **Follow Systematic Checklist** - Do not skip any category
+2. **Categorize Issues** - Use P0/P1/P2/P3 priority system
+3. **Document Findings** - Clear, actionable feedback
+4. **Verify Fixes** - Re-review after fixes are applied
+
+### Code Review Systematic Checklist
+
+**Rule:** When performing code reviews, systematically check ALL categories below. Do not skip any category.
+
+**CRITICAL: Service Files Audit**
+
+**Rule:** ALL service files in `lib/services/` MUST be checked for console statements, not just hooks.
+
+**✅ REQUIRED CHECK:**
+```bash
+# Systematically check all service files
+grep -r "console\." lib/services/
+grep -r "extends BaseService" lib/services/
+```
+
+**Files to Check:**
+- All service files in `lib/services/[feature]/[Feature]Service.ts`
+- Any other service files in `lib/services/`
+
+**Action:** 
+1. Check each service file individually
+2. Verify all console statements are replaced with logger utility
+3. Verify all services extend BaseService
+4. Document any violations as P0 CRITICAL issues
+5. Do not assume hooks-only review is sufficient - service files are production-bound code
+
+**CRITICAL: Component Pattern Duplication Audit**
+
+**Rule:** When checking for duplicate component patterns, verify ALL similar component types across modules.
+
+**✅ REQUIRED CHECK:**
+```bash
+# Check for duplicate component patterns
+find components -name "*table.tsx"
+find components -name "*dialog.tsx"
+find components -name "*form.tsx"
+find components -name "*card.tsx"
+find components -name "*list.tsx"
+```
+
+**Patterns to Check:**
+1. **Data Tables** - Check all modules for table components
+2. **Add/Edit Dialogs** - Check all modules
+3. **Form Components** - Check all modules
+4. **Card Components** - Check all modules
+5. **List Components** - Check all modules
+6. **Detail Views** - Check all modules
+7. **Any other similar component patterns**
+
+**Action:**
+1. Identify all components with similar names/patterns across modules
+2. Compare their implementations for duplication
+3. Document duplicate patterns as P1 HIGH priority issues
+4. Reference cursor rules Component Pattern Reusability section
+
+**Systematic Review Process:**
+
+1. **Service Files:**
+   - [ ] Check all files in `lib/services/` for console statements
+   - [ ] Verify all console statements replaced with logger utility
+   - [ ] Verify all services extend BaseService
+   - [ ] Document any violations as P0 CRITICAL
+
+2. **Component Patterns:**
+   - [ ] List all similar component patterns across modules
+   - [ ] Compare implementations for duplication
+   - [ ] Check against cursor rules Component Pattern Reusability section
+   - [ ] Document duplicates as P1 HIGH priority
+
+3. **Hooks:**
+   - [ ] Check all hooks for console statements
+   - [ ] Verify all console statements replaced with logger utility
+   - [ ] Verify all hooks use service layer (not direct customFetch)
+   - [ ] Verify all hooks use useGlobalErrorHandler
+
+4. **Components:**
+   - [ ] Check ALL functional components for React.memo() usage (optional but recommended)
+   - [ ] Verify callbacks use useCallback()
+   - [ ] Verify expensive computations use useMemo()
+   - [ ] Verify no `any` types in props
+   - [ ] Verify ALL component props have explicit TypeScript interfaces
+   - [ ] Verify ALL functions have explicit return types and parameter types
+   - [ ] Check for proper error handling
+   - [ ] Check for explicit loading/error/empty state checks
+
+5. **Architecture:**
+   - [ ] Verify all services extend BaseService
+   - [ ] Check for architectural violations
+   - [ ] Verify all new services are registered in `lib/services/index.ts`
+   - [ ] Verify no direct service instantiation
+   - [ ] Verify no direct customFetch calls in hooks
+
+**Action:** Use this checklist for every code review. Do not skip any category.
+
+### Code Review Priorities
+
+**P0 (CRITICAL/BLOCKING) - Must Fix Before Merge:**
+- ❌ Architectural violations (direct service instantiation, not using BaseService)
+- ❌ Security issues (exposed credentials, insecure storage)
+- ❌ Production code quality issues (direct console.log/error/warn, debug code)
+- ❌ Missing critical functionality (user feedback, error handling)
+- ❌ TypeScript typing violations (`any` types in production code)
+- ❌ Missing TypeScript interfaces for component props
+- ❌ Services not extending BaseService pattern
+- ❌ Direct customFetch calls in hooks (must use service layer)
+
+**P1 (HIGH) - Should Fix Immediately:**
+- ⚠️ Code duplication (DRY violations)
+- ⚠️ Missing error handling with useGlobalErrorHandler
+- ⚠️ Type safety issues (missing interfaces, union types)
+- ⚠️ Performance issues (unnecessary re-renders, missing optimizations)
+- ⚠️ Component pattern duplication
+- ⚠️ Not using centralized logger utility
+
+**P2 (MEDIUM) - Consider Fixing:**
+- 🔶 Code quality improvements
+- 🔶 UX enhancements
+- 🔶 Optimization opportunities
+- 🔶 Documentation improvements
+- 🔶 Missing React.memo in performance-critical components
+
+**P3 (LOW) - Optional Improvements:**
+- 🔷 Code cleanup
+- 🔷 Minor documentation
+- 🔷 Minor UX improvements
+- 🔷 Style consistency
+
+**Action:** Optional improvements, can be addressed in future PRs.
+
+### Merge Quality Gates
+
+**Rule:** Code must pass ALL quality gates before merge approval.
+
+#### Required Checks (All Must Pass)
+
+- [ ] ✅ All P0 (CRITICAL) issues resolved
+- [ ] ✅ All components and services use comprehensive TypeScript typing (MANDATORY)
+- [ ] ✅ All console.log/error/warn statements replaced with logger utility
+- [ ] ✅ All `any` types replaced with proper types
+- [ ] ✅ All services extend BaseService
+- [ ] ✅ All hooks use service layer (not direct customFetch)
+- [ ] ✅ All async operations have user feedback via useGlobalErrorHandler
+- [ ] ✅ No duplicate code across modules (including all component patterns)
+- [ ] ✅ All error handling uses useGlobalErrorHandler
+- [ ] ✅ Systematic code review checklist completed
+
+#### Blocking Issues (Cannot Merge)
+
+- ❌ Direct customFetch calls in hooks (must use service layer)
+- ❌ Console.log/error/warn in production code (must use logger)
+- ❌ Missing user feedback on async operations
+- ❌ Services not extending BaseService
+- ❌ Security issues
+- ❌ Missing TypeScript interfaces for component props
+- ❌ `any` types in production code
+
+#### Pre-Merge Checklist
+
+Before requesting merge approval:
+
+1. [ ] Run systematic checklist
+2. [ ] Verify all P0 issues resolved
+3. [ ] Verify all P1 issues addressed or documented
+4. [ ] Run linter: `read_lints`
+5. [ ] Check for unused code
+6. [ ] Verify TypeScript compilation: `npx tsc --noEmit`
+7. [ ] Run tests: `pnpm test` (if applicable)
+8. [ ] Run E2E tests: `pnpm test:e2e` (if applicable)
+9. [ ] Update documentation if needed
+
+### Code Review Best Practices
+
+1. **Be Systematic** - Follow the checklist in order, don't skip categories
+2. **Be Specific** - Provide file paths, line numbers, and code examples
+3. **Be Actionable** - Suggest specific fixes, not just problems
+4. **Be Consistent** - Use the same priority system and terminology
+5. **Be Thorough** - Check all related files, not just changed files
+6. **Be Collaborative** - Explain why issues matter, not just what's wrong
+
+### Code Review Report Template
+
+When documenting code review findings, use this structure:
+
+```markdown
+# Code Review Report
+
+**Date:** [Date]
+**Reviewer:** [Name]
+**PR/Change:** [Link or description]
+**Scope:** [What was reviewed]
+
+## Summary
+
+- **P0 (CRITICAL):** X issues
+- **P1 (HIGH):** X issues
+- **P2 (MEDIUM):** X issues
+- **P3 (LOW):** X issues
+
+## P0 (CRITICAL) Issues
+
+### Issue 1: [Title]
+**File:** `path/to/file.ts`
+**Line:** X
+**Issue:** [Description]
+**Fix:** [Required fix]
+**Priority:** P0 CRITICAL
+
+## P1 (HIGH) Issues
+
+[Similar structure]
+
+## P2 (MEDIUM) Issues
+
+[Similar structure]
+
+## P3 (LOW) Issues
+
+[Similar structure]
+
+## Compliance Checklist
+
+- [ ] Service layer audit completed
+- [ ] Component pattern duplication audit completed
+- [ ] TypeScript typing verified
+- [ ] Architecture verified
+- [ ] Error handling verified
+- [ ] User feedback verified
+- [ ] Logging verified (logger utility)
+- [ ] All quality gates passed
+```
+
+### Unused Code Review
+
+**Checklist:**
+- [ ] No unused imports
+- [ ] No unused variables
+- [ ] No unused function parameters
+- [ ] No commented-out code (unless documented)
+- [ ] No dead code paths
+
+**Tools:**
+- TypeScript compiler: `npx tsc --noEmit`
+- Linter: `read_lints` tool
+- Manual review of imports and declarations
+
+### Code Organization
+
+**File Structure:**
+```
+/app/              # Next.js App Router (pages)
+/components/      # React components (feature-based)
+/hooks/           # Custom React hooks
+/lib/             # Utilities and services
+/types/           # TypeScript definitions
+/middlewares/     # Security and validation
+/docs/            # Documentation
+/scripts/         # Database migration scripts
+/tests/           # Test files
+```
+
+### File Naming Conventions
+
+**Rule:** Follow consistent naming conventions across the codebase.
+
+**Components:** PascalCase
+- ✅ `ClientsList.tsx`
+- ✅ `ClientCard.tsx`
+- ❌ `clients-list.tsx` (use PascalCase)
+
+**Hooks:** camelCase with `use` prefix
+- ✅ `use-clients.ts`
+- ✅ `use-global-error-handler.ts`
+- ❌ `useClients.ts` (use kebab-case for file names)
+
+**Types:** camelCase
+- ✅ `client.types.ts`
+- ✅ `client.schemas.ts`
+- ❌ `ClientTypes.ts` (use camelCase)
+
+**Constants:** camelCase
+- ✅ `query-keys.ts`
+- ✅ `app-config.ts`
+- ❌ `QUERY_KEYS.ts` (use camelCase)
+
+**Services:** PascalCase
+- ✅ `ClientService.ts`
+- ✅ `BaseService.ts`
+- ❌ `client-service.ts` (use PascalCase)
+
+**Pages:** lowercase (Next.js App Router convention)
+- ✅ `app/clients/page.tsx`
+- ✅ `app/clients/[id]/page.tsx`
+- ❌ `app/Clients/page.tsx` (use lowercase)
+
+**Action:** Follow these naming conventions consistently across the codebase.
+
+### SOLID Principles
+
+**Checklist:**
+- [ ] **Single Responsibility** - Each class/component has one reason to change
+- [ ] **Open/Closed** - Open for extension, closed for modification (BaseService pattern)
+- [ ] **Liskov Substitution** - Interfaces properly implemented
+- [ ] **Interface Segregation** - Focused, specific interfaces
+- [ ] **Dependency Inversion** - Depend on abstractions (BaseService)
+
+---
+
+## Summary Checklist
+
+When adding new features, ensure:
+
+### Code Reusability and Maintainability
+- [ ] **DRY principle enforced** - No duplicate code across modules
+- [ ] **Shared utilities extracted** - Common functions in `lib/utils/` or `components/shared/`
+- [ ] **Module decoupling** - No hardcoded module-specific logic, text, or references
+- [ ] **Generic components** - Reusable components in `components/shared/` with config objects
+- [ ] **Module-specific wrappers** - Only provide configuration, not duplicate logic
+- [ ] **Component pattern reusability** - Similar patterns use generic components (systematically check ALL modules for duplicate patterns)
+
+### Code Reliability and Stability
+- [ ] **Comprehensive TypeScript typing** - ALL components and services use comprehensive and accurate TypeScript typing (MANDATORY requirement)
+- [ ] **Component props have explicit interfaces** - All component props have explicit TypeScript interfaces
+- [ ] **Service methods have explicit types** - All service methods have explicit return types and parameter types
+- [ ] **Functions have explicit types** - All functions have explicit parameter types and return types
+- [ ] **Data structures have interfaces** - All data structures have interfaces or type definitions
+- [ ] **Type safety** - Union types for constrained values (not literal strings)
+- [ ] **No `any` types** - All `any` types replaced with proper interfaces or `unknown` with type guards
+- [ ] **Error boundaries** - Critical components wrapped with error handling
+- [ ] **Explicit loading checks** - Check `isLoading`, `error`, and data existence before rendering
+- [ ] **Race condition prevention** - Early returns for loading, error, and empty states
+- [ ] **Production code quality** - All console.log statements replaced with logger utility (including ALL service files in `lib/services/`)
+
+### Architecture and Patterns
+- [ ] **SOLID principles are followed** (SRP, OCP, LSP, ISP, DIP)
+- [ ] **All services extend BaseService** (CRITICAL: no direct instantiation)
+- [ ] **All new services registered in `lib/services/index.ts`**
+- [ ] **TanStack Query is used for server state**
+- [ ] **Zustand is used for persistent client state**
+- [ ] **React.memo used for performance-critical components** (optional but recommended)
+- [ ] **Callbacks passed as props use `useCallback()`** (prevents child re-renders)
+- [ ] **Expensive computations use `useMemo()`** (avoids recalculation)
+- [ ] **Derived data/transformations use `useMemo()`** (prevents unnecessary recalculations)
+- [ ] **Common transformations use shared utilities** (date formatting, error handling, etc.)
+- [ ] **No duplicate logic** - extracted to shared utilities before duplication
+- [ ] **Query keys follow hierarchy pattern**
+- [ ] **Default query settings used** (or documented overrides)
+- [ ] **User feedback is ALWAYS shown** (success/error toast after async operations)
+- [ ] **Error messages use standardized error handler**
+- [ ] **File naming conventions followed** (PascalCase for components, camelCase for hooks/types)
+- [ ] **Code review priority system** - All issues categorized (P0/P1/P2/P3) and P0 issues resolved before merge
+- [ ] **Merge quality gates passed** - All blocking issues resolved
+
+## Quick Reference
+
+### Service Files Audit
+```bash
+grep -r "console\." lib/services/
+grep -r "extends BaseService" lib/services/
+```
+
+### Component Pattern Check
+```bash
+find components -name "*table.tsx"
+find components -name "*dialog.tsx"
+find components -name "*form.tsx"
+find components -name "*card.tsx"
+find components -name "*list.tsx"
+```
+
+### TypeScript Check
+```bash
+npx tsc --noEmit
+```
+
+### Linter Check
+```bash
+pnpm ci:lint:fast
+```
+
+---
+
+**Last Updated:** January 2025  
+**Maintained By:** Development Team  
+
+## Reference Documents
+
+### Cursor Rules
+- `.cursor/rules/project-wide-rules.mdc` - Complete project rules (this file)
+- `.cursor/rules/frontend-rules.mdc` - Frontend-specific rules
+- `.cursor/rules/backend-rules.mdc` - Backend-specific rules
+- `.cursor/rules/layered-architecture-implementation.mdc` - Architecture patterns
+
+### Project Documentation
+- `docs/CODE_REVIEW_REQUIREMENTS.md` - Comprehensive code review guide
+- `docs/tech-stack.md` - Technology stack documentation
+- `docs/service-layer.md` - Service layer documentation (if exists)
+- `docs/global-error-handler-usage.md` - Error handling guide (if exists)
+- `docs/error-handling.md` - Error handling patterns (if exists)
+- `docs/folder-structure.md` - Project structure (if exists)
+- `docs/testing.md` - Testing guidelines (if exists)
