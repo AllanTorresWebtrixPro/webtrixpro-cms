@@ -1,4 +1,4 @@
-# WebtrixPro CMS
+# WebtrixPro CMS Test
 
 A modern, type-safe Content Management System built with Next.js 15, TypeScript, and React Query. This CMS provides a robust foundation for managing content across multiple pages including homepage, about, services, portfolio, testimonials, and contact.
 
